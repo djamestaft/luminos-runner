@@ -82,12 +82,17 @@ export class WorktreeTaskHandler implements TaskHandler {
     }
 
     const commitSha = (await this.git(["-C", worktreePath, "rev-parse", "HEAD"])).trim();
+    if (this.config.pushOnSuccess) {
+      await this.pushBranch(worktreePath, branchName);
+    }
+
     const summary = [
       `PI finished task "${task.title}" locally and left committed work ready for review.`,
       `Branch: ${branchName}`,
       `Worktree: ${worktreePath}`,
       `Commit: ${commitSha}`,
       `Base branch: ${this.config.baseBranch}`,
+      `Pushed: ${this.config.pushOnSuccess ? `${this.config.pushRemote}/${branchName}` : "no"}`,
       `Wrapper started: ${wrapperStartedAt}`
     ].join("\n");
 
@@ -98,7 +103,9 @@ export class WorktreeTaskHandler implements TaskHandler {
         branchName,
         worktreePath,
         commitSha,
-        baseBranch: this.config.baseBranch
+        baseBranch: this.config.baseBranch,
+        pushed: this.config.pushOnSuccess,
+        pushRemote: this.config.pushRemote
       })
     );
 
@@ -211,21 +218,44 @@ export class WorktreeTaskHandler implements TaskHandler {
     return { exitCode };
   }
 
+  private async pushBranch(worktreePath: string, branchName: string): Promise<void> {
+    console.log(
+      JSON.stringify({
+        event: "task_branch_push_started",
+        branchName,
+        remote: this.config.pushRemote,
+        worktreePath
+      })
+    );
+
+    await this.git(["-C", worktreePath, "push", "-u", this.config.pushRemote, branchName]);
+
+    console.log(
+      JSON.stringify({
+        event: "task_branch_push_succeeded",
+        branchName,
+        remote: this.config.pushRemote,
+        worktreePath
+      })
+    );
+  }
+
   private async git(args: string[]): Promise<string> {
     return runCommand("git", args);
   }
 }
 
 const buildBranchName = (task: TaskView): string => {
-  const idPart = sanitizeSegment(task._id).slice(0, 36);
-  const titlePart = sanitizeSegment(task.title).slice(0, 48);
-  return `luminos/${idPart}-${titlePart}`.replace(/\/-+$/, "/task");
+  const idPart = sanitizeSegment(task._id).slice(0, 24);
+  const attemptPart = `a${task.attempt}`;
+  const titlePart = sanitizeSegment(task.title).slice(0, 21);
+  return `luminos/${idPart}-${attemptPart}-${titlePart}`.replace(/\/-+$/, "/task");
 };
 
 const buildWorktreePath = (worktreeRoot: string, task: TaskView): string =>
   path.join(
     worktreeRoot,
-    `${sanitizeSegment(task._id).slice(0, 24)}-a${task.attempt}-${sanitizeSegment(task.title).slice(0, 48)}`
+    `${sanitizeSegment(task._id).slice(0, 16)}-a${task.attempt}-${sanitizeSegment(task.title).slice(0, 12)}`
   );
 
 const sanitizeSegment = (value: string): string =>

@@ -24,6 +24,23 @@ const parseNumber = (name: string, fallback: number): number => {
   return value;
 };
 
+const parseBoolean = (name: string, fallback: boolean): boolean => {
+  const raw = process.env[name]?.trim().toLowerCase();
+  if (!raw) {
+    return fallback;
+  }
+
+  if (["1", "true", "yes", "on"].includes(raw)) {
+    return true;
+  }
+
+  if (["0", "false", "no", "off"].includes(raw)) {
+    return false;
+  }
+
+  throw new Error(`Environment variable ${name} must be a boolean`);
+};
+
 const resolveRepoRoot = (): string => required("SOURCE_REPO_ROOT");
 
 const resolveWorktreeRoot = (): string =>
@@ -41,5 +58,7 @@ export const loadConfig = (): RunnerConfig => ({
   repoRoot: resolveRepoRoot(),
   worktreeRoot: resolveWorktreeRoot(),
   baseBranch: process.env.BASE_BRANCH?.trim() || "main",
-  piCommand: required("PI_COMMAND")
+  piCommand: required("PI_COMMAND"),
+  pushOnSuccess: parseBoolean("PUSH_ON_SUCCESS", false),
+  pushRemote: process.env.PUSH_REMOTE?.trim() || "origin"
 });

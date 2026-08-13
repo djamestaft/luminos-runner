@@ -16,6 +16,7 @@ export interface TaskView {
   createdBy: string;
   approvedBy?: string;
   claimedBy?: string;
+  discordThreadId?: string;
   discordChannelId?: string;
   discordInteractionId?: string;
   discordMessageId?: string;
@@ -49,4 +50,6 @@ export interface RunnerConfig {
   worktreeRoot: string;
   baseBranch: string;
   piCommand: string;
+  pushOnSuccess: boolean;
+  pushRemote: string;
 }

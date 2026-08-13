@@ -165,7 +165,9 @@ const createConfig = (): RunnerConfig => ({
   repoRoot: "C:\\repo",
   worktreeRoot: "C:\\worktrees",
   baseBranch: "main",
-  piCommand: "pi-wrapper"
+  piCommand: "pi-wrapper",
+  pushOnSuccess: false,
+  pushRemote: "origin"
 });
 
 const createTask = (): TaskView => ({

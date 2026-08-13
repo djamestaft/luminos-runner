@@ -36,14 +36,18 @@ Optional:
 - `LEASE_DURATION_MS`
 - `WORKTREE_ROOT`
 - `BASE_BRANCH=main`
-- `PI_PLANNER_COMMAND`
-- `PI_IMPLEMENTOR_COMMAND`
-- `PI_REVIEWER_COMMAND`
+- `CODEX_COMMAND=codex.cmd`
+- `CODEX_MODEL`
+- `CODEX_PROFILE`
 - `POST_PLANNER_TO_DISCORD=true`
+- `POST_TASK_UPDATES_TO_DISCORD=true`
 - `DISCORD_BOT_TOKEN`
+- `DISCORD_TASKS_CHANNEL_ID`
 - `DISCORD_WEBHOOK_URL`
 - `PI_AUTO_COMMIT=true`
 - `PI_AUTO_COMMIT_MESSAGE`
+- `PUSH_ON_SUCCESS=false`
+- `PUSH_REMOTE=origin`
 
 ## Commands
 
@@ -66,44 +70,56 @@ The runner then executes `PI_COMMAND --worktree <path> --task-id <id> --branch <
 
 ## Wrapper
 
-Use the checked-in wrapper as the stable runner command:
+Use the Codex wrapper as the preferred POC runner command:
 
 ```env
-PI_COMMAND=C:\Users\dev.one\Documents\Projects\Contracts\luminos-runner\scripts\pi-wrapper.cmd
+PI_COMMAND=C:\Users\dev.one\Documents\Projects\Contracts\luminos-runner\scripts\codex-wrapper.cmd
 ```
 
-The wrapper runs up to three internal phases:
-
-- planner via `PI_PLANNER_COMMAND`
-- implementor via `PI_IMPLEMENTOR_COMMAND`
-- reviewer via `PI_REVIEWER_COMMAND`
-
-Each phase command is optional. If a phase command is empty, that phase is skipped.
-
-Command templates can use:
-
-- `{runnerRoot}`
-- `{worktree}`
-- `{taskId}`
-- `{branch}`
-- `{phase}`
-
-The wrapper also sets:
+The Codex wrapper runs one non-interactive `codex exec` session inside the task worktree and writes:
 
 - `LUMINOS_TASK_ID`
 - `LUMINOS_TASK_BRANCH`
 - `LUMINOS_WORKTREE_PATH`
 - `LUMINOS_RUNNER_ROOT`
-- `LUMINOS_PI_PHASE`
+
+It also stores:
+
+- `.luminos/codex-run-context.json`
+- `.luminos/codex-prompt.md`
+- `.luminos/codex-last-message.md`
 
 If `PI_AUTO_COMMIT=true`, the wrapper runs `git add -A` and creates a commit after the phases complete, but only if there are actual changes.
 
-If `POST_PLANNER_TO_DISCORD=true`, the wrapper also looks for the newest changed markdown file under `orchestration/plans/` after the planner phase and posts it to Discord:
+If `PUSH_ON_SUCCESS=true`, the runner pushes the successful task branch after the wrapper has created a commit:
 
-- preferred: the original task channel via `DISCORD_BOT_TOKEN` plus the task's stored `discordChannelId`
-- fallback: `DISCORD_WEBHOOK_URL`
+```bash
+git push -u <PUSH_REMOTE> <task-branch>
+```
 
-The planner markdown is posted in 1900-character chunks so long plans still arrive intact.
+The default remote is `origin`. Push failures fail the task instead of marking it `in_review`.
+
+If `POST_TASK_UPDATES_TO_DISCORD=true`, the wrapper posts progress updates into the task's Discord thread/channel throughout the run:
+
+- task started
+- codex started
+- codex finished
+- local execution complete
+- failure details if Codex or the wrapper errors
+
+If `DISCORD_TASKS_CHANNEL_ID` is set and the task does not already carry a `discordThreadId`, the wrapper creates a dedicated thread under that channel and uses it for all runner updates in the current run.
+
+Status updates are posted in 1900-character chunks so long messages still arrive intact.
+
+## Legacy PI Wrapper
+
+The older PI multi-phase wrapper is still available at:
+
+```env
+PI_COMMAND=C:\Users\dev.one\Documents\Projects\Contracts\luminos-runner\scripts\pi-wrapper.cmd
+```
+
+That path is now considered legacy compared with the simpler Codex POC flow above.
 
 ## Smoke Test
 

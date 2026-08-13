@@ -4,16 +4,14 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+
+import { buildCodexExecArgs, buildCodexPrompt } from "./codex-wrapper-lib.mjs";
 import {
-  captureMarkdownState,
-  findUpdatedMarkdownFile,
-  formatDiscordThreadName,
-  formatClarifyingQuestionsDiscordMessage,
-  formatPlannerDiscordMessage,
   formatRunnerStatusDiscordMessage,
   parseBoolean,
   resolveDiscordChannelId,
-  splitDiscordMessage
+  splitDiscordMessage,
+  formatDiscordThreadName
 } from "./pi-wrapper-lib.mjs";
 
 const args = parseArgs(process.argv.slice(2));
@@ -38,63 +36,89 @@ const context = {
   worktree,
   runnerRoot,
   startedAt: new Date().toISOString(),
-  plannerCommand: process.env.PI_PLANNER_COMMAND ?? "",
-  implementorCommand: process.env.PI_IMPLEMENTOR_COMMAND ?? "",
-  reviewerCommand: process.env.PI_REVIEWER_COMMAND ?? "",
+  command: process.env.CODEX_COMMAND?.trim() || "codex.cmd",
+  model: process.env.CODEX_MODEL?.trim() || "",
+  profile: process.env.CODEX_PROFILE?.trim() || "",
   autoCommit: parseBoolean(process.env.PI_AUTO_COMMIT, true),
-  autoCommitMessage:
-    process.env.PI_AUTO_COMMIT_MESSAGE?.trim() || `PI implementation for ${taskId}`
+  autoCommitMessage: process.env.PI_AUTO_COMMIT_MESSAGE?.trim() || `Codex implementation for ${taskId}`
 };
 
-await writeFile(path.join(worktree, ".luminos", "pi-run-context.json"), JSON.stringify(context, null, 2));
+await writeFile(path.join(worktree, ".luminos", "codex-run-context.json"), JSON.stringify(context, null, 2));
+
 const task = await readTaskPayload(worktree);
-const discordEnabled = shouldPostTaskUpdatesToDiscord();
 let discordTargetState = null;
 
 try {
-  if (discordEnabled) {
-    await maybePostTaskStatusToDiscord(worktree, taskId, branch, task, {
+  if (shouldPostTaskUpdatesToDiscord()) {
+    await postTaskStatusToDiscord(task, {
+      taskId,
+      branch,
       status: "started",
-      detail: "Runner claimed the task and started local execution."
+      detail: "Runner claimed the task and started Codex execution."
     });
   }
 
-  const plannerPlanState = await captureMarkdownState(worktree, "orchestration/plans");
-  const plannerQuestionState = await captureMarkdownState(worktree, "orchestration/questions");
-  await runPhase("planner", worktree, taskId, branch, context.plannerCommand, task, discordEnabled);
-  await maybePostPlannerResultToDiscord(worktree, taskId, branch, task, plannerPlanState);
-  await maybePostClarifyingQuestionsToDiscord(worktree, taskId, branch, task, plannerQuestionState, "planner");
+  const outputPath = path.join(worktree, ".luminos", "codex-last-message.md");
+  const prompt = buildCodexPrompt(task);
+  await writeFile(path.join(worktree, ".luminos", "codex-prompt.md"), prompt);
 
-  const implementorQuestionState = await captureMarkdownState(worktree, "orchestration/questions");
-  await runPhase("implementor", worktree, taskId, branch, context.implementorCommand, task, discordEnabled);
-  await maybePostClarifyingQuestionsToDiscord(
-    worktree,
-    taskId,
-    branch,
-    task,
-    implementorQuestionState,
-    "implementor"
-  );
+  const execCommand = buildCodexExecArgs({
+    worktreePath: worktree,
+    outputPath,
+    model: context.model,
+    profile: context.profile,
+    command: context.command
+  });
 
-  const reviewerQuestionState = await captureMarkdownState(worktree, "orchestration/questions");
-  await runPhase("reviewer", worktree, taskId, branch, context.reviewerCommand, task, discordEnabled);
-  await maybePostClarifyingQuestionsToDiscord(worktree, taskId, branch, task, reviewerQuestionState, "reviewer");
+  if (shouldPostTaskUpdatesToDiscord()) {
+    await postTaskStatusToDiscord(task, {
+      taskId,
+      branch,
+      status: "codex started",
+      detail: "Codex is now running inside the task worktree."
+    });
+  }
+
+  await runCommandWithInput(execCommand.file, execCommand.args, prompt, {
+    cwd: worktree,
+    env: {
+      ...process.env,
+      LUMINOS_TASK_ID: taskId,
+      LUMINOS_TASK_BRANCH: branch,
+      LUMINOS_WORKTREE_PATH: worktree,
+      LUMINOS_RUNNER_ROOT: runnerRoot
+    }
+  });
+
+  if (shouldPostTaskUpdatesToDiscord()) {
+    await postTaskStatusToDiscord(task, {
+      taskId,
+      branch,
+      status: "codex finished",
+      detail: "Codex finished execution. Running local commit step next."
+    });
+  }
 
   if (context.autoCommit) {
     await autoCommit(worktree, context.autoCommitMessage);
   }
 
-  if (discordEnabled) {
-    await maybePostTaskStatusToDiscord(worktree, taskId, branch, task, {
+  if (shouldPostTaskUpdatesToDiscord()) {
+    const summary = await readLastMessage(outputPath);
+    await postTaskStatusToDiscord(task, {
+      taskId,
+      branch,
       status: "local execution complete",
-      detail: "Runner finished all configured phases and any local commit step."
+      detail: summary || "Runner finished Codex execution and local commit handling."
     });
   }
 
   process.exit(0);
 } catch (error) {
-  if (discordEnabled) {
-    await maybePostTaskStatusToDiscord(worktree, taskId, branch, task, {
+  if (shouldPostTaskUpdatesToDiscord()) {
+    await postTaskStatusToDiscord(task, {
+      taskId,
+      branch,
       status: "failed",
       detail: error instanceof Error ? error.message : String(error)
     }).catch(() => undefined);
@@ -102,250 +126,52 @@ try {
   throw error;
 }
 
-async function runPhase(phase, worktreePath, currentTaskId, currentBranch, template, task, discordEnabled) {
-  if (!template.trim()) {
-    console.log(
-      JSON.stringify({
-        event: "pi_phase_skipped",
-        phase,
-        reason: "missing_command",
-        taskId: currentTaskId
-      })
-    );
-    return;
-  }
-
-  const command = interpolate(template, {
-    runnerRoot,
-    worktree: worktreePath,
-    taskId: currentTaskId,
-    branch: currentBranch,
-    phase
-  });
-
-  console.log(
-    JSON.stringify({
-      event: "pi_phase_started",
-      phase,
-      taskId: currentTaskId,
-      branch: currentBranch,
-      command
-    })
-  );
-
-  if (discordEnabled) {
-    await maybePostTaskStatusToDiscord(worktreePath, currentTaskId, currentBranch, task, {
-      status: "phase started",
-      phase,
-      detail: `The ${phase} phase is now running.`
-    });
-  }
-
-  await runShell(command, {
-    cwd: worktreePath,
-    env: {
-      ...process.env,
-      LUMINOS_TASK_ID: currentTaskId,
-      LUMINOS_TASK_BRANCH: currentBranch,
-      LUMINOS_WORKTREE_PATH: worktreePath,
-      LUMINOS_RUNNER_ROOT: runnerRoot,
-      LUMINOS_PI_PHASE: phase
-    }
-  });
-
-  console.log(
-    JSON.stringify({
-      event: "pi_phase_finished",
-      phase,
-      taskId: currentTaskId
-    })
-  );
-
-  if (discordEnabled) {
-    await maybePostTaskStatusToDiscord(worktreePath, currentTaskId, currentBranch, task, {
-      status: "phase finished",
-      phase,
-      detail: `The ${phase} phase completed successfully.`
-    });
-  }
-}
-
 async function autoCommit(worktreePath, commitMessage) {
   const status = await runCommand("git", ["-C", worktreePath, "status", "--porcelain"]);
   if (!status.stdout.trim()) {
-    console.log(
-      JSON.stringify({
-        event: "pi_auto_commit_skipped",
-        reason: "no_changes"
-      })
-    );
     return;
   }
 
   await runCommand("git", ["-C", worktreePath, "add", "-A"]);
   const stagedStatus = await runCommand("git", ["-C", worktreePath, "diff", "--cached", "--name-only"]);
   if (!stagedStatus.stdout.trim()) {
-    console.log(
-      JSON.stringify({
-        event: "pi_auto_commit_skipped",
-        reason: "nothing_staged"
-      })
-    );
     return;
   }
 
   await runCommand("git", ["-C", worktreePath, "commit", "-m", commitMessage], {
     stdio: "inherit"
   });
-
-  const head = await runCommand("git", ["-C", worktreePath, "rev-parse", "HEAD"]);
-  console.log(
-    JSON.stringify({
-      event: "pi_auto_commit_finished",
-      commitSha: head.stdout.trim()
-    })
-  );
 }
 
-async function maybePostPlannerResultToDiscord(worktreePath, currentTaskId, currentBranch, task, previousPlanState) {
-  if (!shouldPostTaskUpdatesToDiscord()) {
-    return;
-  }
-
-  const plan = await findUpdatedMarkdownFile(worktreePath, "orchestration/plans", previousPlanState);
-  if (!plan) {
-    console.log(
-      JSON.stringify({
-        event: "planner_discord_post_skipped",
-        reason: "missing_plan_file",
-        taskId: currentTaskId
-      })
-    );
-    return;
-  }
-
-  const message = formatPlannerDiscordMessage({
-    taskId: currentTaskId,
-    branch: currentBranch,
-    taskTitle: task?.title,
-    relativePlanPath: plan.relativePath,
-    markdown: plan.content
-  });
-
-  await postDiscordMessage(task, currentTaskId, splitDiscordMessage(message), {
-    successEvent: "planner_discord_posted",
-    successMetadata: { planPath: plan.relativePath }
-  });
-}
-
-async function maybePostClarifyingQuestionsToDiscord(
-  worktreePath,
-  currentTaskId,
-  currentBranch,
-  task,
-  previousQuestionState,
-  phase
-) {
-  if (!shouldPostTaskUpdatesToDiscord()) {
-    return;
-  }
-
-  const questionFile = await findUpdatedMarkdownFile(worktreePath, "orchestration/questions", previousQuestionState);
-  if (!questionFile) {
-    return;
-  }
-
-  const message = formatClarifyingQuestionsDiscordMessage({
-    taskId: currentTaskId,
-    branch: currentBranch,
-    taskTitle: task?.title,
-    relativeQuestionPath: questionFile.relativePath,
-    markdown: questionFile.content
-  });
-
-  await postDiscordMessage(task, currentTaskId, splitDiscordMessage(message), {
-    successEvent: "clarifying_questions_discord_posted",
-    successMetadata: {
-      phase,
-      questionPath: questionFile.relativePath
-    }
-  });
-}
-
-async function maybePostTaskStatusToDiscord(worktreePath, currentTaskId, currentBranch, task, update) {
-  if (!shouldPostTaskUpdatesToDiscord()) {
-    return;
-  }
-
+async function postTaskStatusToDiscord(task, update) {
   const message = formatRunnerStatusDiscordMessage({
-    taskId: currentTaskId,
-    branch: currentBranch,
+    taskId: update.taskId,
+    branch: update.branch,
     taskTitle: task?.title,
     status: update.status,
-    phase: update.phase,
     detail: update.detail
   });
 
-  await postDiscordMessage(task, currentTaskId, splitDiscordMessage(message), {
-    successEvent: "task_status_discord_posted",
-    successMetadata: {
-      phase: update.phase,
-      status: update.status
-    }
-  });
+  await postDiscordMessage(task, update.taskId, splitDiscordMessage(message));
 }
 
-async function postDiscordMessage(task, currentTaskId, chunks, { successEvent, successMetadata }) {
+async function postDiscordMessage(task, currentTaskId, chunks) {
   const botToken = process.env.DISCORD_BOT_TOKEN?.trim();
   const webhookUrl = process.env.DISCORD_WEBHOOK_URL?.trim();
   const destination = await resolveDiscordDestination(task, currentTaskId, botToken);
 
   if (!botToken && !webhookUrl) {
-    console.log(
-      JSON.stringify({
-        event: `${successEvent}_skipped`,
-        reason: "missing_discord_credentials",
-        taskId: currentTaskId
-      })
-    );
     return;
   }
 
   if (botToken && destination?.channelId) {
     await postChannelMessages(destination.channelId, botToken, chunks);
-    console.log(
-      JSON.stringify({
-        event: successEvent,
-        destination: destination.kind,
-        taskId: currentTaskId,
-        channelId: destination.channelId,
-        parentChannelId: destination.parentChannelId,
-        ...successMetadata
-      })
-    );
     return;
   }
 
   if (webhookUrl) {
     await postWebhookMessages(webhookUrl, chunks);
-    console.log(
-      JSON.stringify({
-        event: successEvent,
-        destination: "webhook",
-        taskId: currentTaskId,
-        ...successMetadata
-      })
-    );
-    return;
   }
-
-  console.log(
-      JSON.stringify({
-        event: `${successEvent}_skipped`,
-        reason: "missing_discord_destination_for_bot_post",
-        taskId: currentTaskId
-      })
-    );
 }
 
 async function resolveDiscordDestination(task, currentTaskId, botToken) {
@@ -447,14 +273,6 @@ async function writeCachedDiscordThreadId(worktreePath, threadId) {
   await writeFile(statePath, JSON.stringify({ threadId }, null, 2));
 }
 
-function shouldPostTaskUpdatesToDiscord() {
-  return parseBoolean(process.env.POST_TASK_UPDATES_TO_DISCORD, parseBoolean(process.env.POST_PLANNER_TO_DISCORD, false));
-}
-
-function interpolate(template, variables) {
-  return template.replace(/\{(runnerRoot|worktree|taskId|branch|phase)\}/g, (_, key) => variables[key]);
-}
-
 async function readTaskPayload(worktreePath) {
   const taskPath = path.join(worktreePath, "luminos-task.json");
   try {
@@ -463,6 +281,18 @@ async function readTaskPayload(worktreePath) {
   } catch {
     return null;
   }
+}
+
+async function readLastMessage(outputPath) {
+  try {
+    return (await readFile(outputPath, "utf8")).trim();
+  } catch {
+    return "";
+  }
+}
+
+function shouldPostTaskUpdatesToDiscord() {
+  return parseBoolean(process.env.POST_TASK_UPDATES_TO_DISCORD, parseBoolean(process.env.POST_PLANNER_TO_DISCORD, false));
 }
 
 async function postChannelMessages(channelId, botToken, chunks) {
@@ -496,7 +326,7 @@ async function postWebhookMessages(webhookUrl, chunks) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         content,
-        username: "Luminos Planner"
+        username: "Luminos Runner"
       })
     });
 
@@ -535,32 +365,28 @@ function fail(message) {
   process.exit(1);
 }
 
-async function runShell(command, options) {
+async function runCommandWithInput(file, args, input, options = {}) {
   const stdout = [];
   const stderr = [];
 
   const exitCode = await new Promise((resolve, reject) => {
-    const child = spawn(command, {
+    const child = spawn(file, args, {
       cwd: options.cwd,
       env: options.env,
-      stdio: options.stdio ?? ["ignore", "pipe", "pipe"],
-      shell: process.platform === "win32" ? "cmd.exe" : true
+      stdio: ["pipe", "pipe", "pipe"],
+      shell: shouldUseShell(file)
     });
 
-    if (child.stdout) {
-      child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
-    }
-    if (child.stderr) {
-      child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
-    }
-
+    child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
+    child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
     child.on("error", reject);
     child.on("exit", (code) => resolve(code ?? 1));
+    child.stdin.end(input);
   });
 
   if (exitCode !== 0) {
     const stderrText = Buffer.concat(stderr).toString("utf8").trim();
-    throw new Error(`Command failed (${exitCode}): ${command}${stderrText ? `\n${stderrText}` : ""}`);
+    throw new Error(`Command failed (${exitCode}): ${file} ${args.join(" ")}${stderrText ? `\n${stderrText}` : ""}`);
   }
 
   return {
@@ -600,4 +426,8 @@ async function runCommand(file, args, options = {}) {
     stdout: Buffer.concat(stdout).toString("utf8"),
     stderr: Buffer.concat(stderr).toString("utf8")
   };
+}
+
+function shouldUseShell(file) {
+  return process.platform === "win32" && /\.(cmd|bat)$/i.test(file);
 }

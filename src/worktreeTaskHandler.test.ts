@@ -121,6 +121,138 @@ test("WorktreeTaskHandler fails the task when the wrapper exits zero without cre
   );
 });
 
+test("WorktreeTaskHandler keeps branch and worktree names short for Windows-heavy repos", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "luminos-runner-"));
+  const repoRoot = path.join(tempRoot, "repo");
+  const worktreeRoot = path.join(tempRoot, "worktrees");
+  const wrapperPath = path.join(tempRoot, "wrapper-success.mjs");
+
+  await initializeRepo(repoRoot);
+  await mkdir(worktreeRoot, { recursive: true });
+  await writeFile(
+    wrapperPath,
+    `import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+writeFileSync(join(process.cwd(), "implemented.txt"), "ok");
+for (const args of [["add", "."], ["commit", "-m", "Implement task"]]) {
+  const result = spawnSync("git", args, { cwd: process.cwd(), stdio: "inherit" });
+  if ((result.status ?? 1) !== 0) {
+    process.exit(result.status ?? 1);
+  }
+}
+`
+  );
+
+  const config = createConfig({
+    repoRoot,
+    worktreeRoot,
+    piCommand: `"${process.execPath}" "${wrapperPath}"`
+  });
+  const handler = new WorktreeTaskHandler(config);
+
+  const result = await handler.run({
+    ...createTask(),
+    _id: "jd793rmae8j7s4hrzeqt8et20s890ty2",
+    title: "Analyze codebase and refactor with clean architecture boundaries"
+  });
+
+  assert.ok(result.branchName.length <= 58, `branch too long: ${result.branchName.length}`);
+  assert.ok(result.worktreePath.length < 120, `worktree path too long: ${result.worktreePath.length}`);
+});
+
+test("WorktreeTaskHandler uses a distinct branch per attempt for the same task", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "luminos-runner-"));
+  const repoRoot = path.join(tempRoot, "repo");
+  const worktreeRoot = path.join(tempRoot, "worktrees");
+  const wrapperPath = path.join(tempRoot, "wrapper-success.mjs");
+
+  await initializeRepo(repoRoot);
+  await mkdir(worktreeRoot, { recursive: true });
+  await writeFile(
+    wrapperPath,
+    `import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+writeFileSync(join(process.cwd(), "implemented.txt"), "ok");
+for (const args of [["add", "."], ["commit", "-m", "Implement task"]]) {
+  const result = spawnSync("git", args, { cwd: process.cwd(), stdio: "inherit" });
+  if ((result.status ?? 1) !== 0) {
+    process.exit(result.status ?? 1);
+  }
+}
+`
+  );
+
+  const config = createConfig({
+    repoRoot,
+    worktreeRoot,
+    piCommand: `"${process.execPath}" "${wrapperPath}"`
+  });
+  const handler = new WorktreeTaskHandler(config);
+
+  const attemptOne = await handler.run({
+    ...createTask(),
+    _id: "same-task-id",
+    title: "Analyze codebase and refactor",
+    attempt: 1
+  });
+
+  const attemptTwo = await handler.run({
+    ...createTask(),
+    _id: "same-task-id",
+    title: "Analyze codebase and refactor",
+    attempt: 2
+  });
+
+  assert.notEqual(attemptOne.branchName, attemptTwo.branchName);
+  assert.match(attemptOne.branchName, /-a1-/);
+  assert.match(attemptTwo.branchName, /-a2-/);
+});
+
+test("WorktreeTaskHandler pushes the task branch when configured", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "luminos-runner-"));
+  const repoRoot = path.join(tempRoot, "repo");
+  const remoteRoot = path.join(tempRoot, "remote.git");
+  const worktreeRoot = path.join(tempRoot, "worktrees");
+  const wrapperPath = path.join(tempRoot, "wrapper-success.mjs");
+
+  await initializeRepo(repoRoot);
+  await runCommand("git", ["init", "--bare", remoteRoot]);
+  await runCommand("git", ["-C", repoRoot, "remote", "add", "origin", remoteRoot]);
+  await mkdir(worktreeRoot, { recursive: true });
+  await writeFile(
+    wrapperPath,
+    `import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+writeFileSync(join(process.cwd(), "implemented.txt"), "ok");
+for (const args of [["add", "."], ["commit", "-m", "Implement task"]]) {
+  const result = spawnSync("git", args, { cwd: process.cwd(), stdio: "inherit" });
+  if ((result.status ?? 1) !== 0) {
+    process.exit(result.status ?? 1);
+  }
+}
+`
+  );
+
+  const config = createConfig({
+    repoRoot,
+    worktreeRoot,
+    piCommand: `"${process.execPath}" "${wrapperPath}"`,
+    pushOnSuccess: true
+  });
+  const handler = new WorktreeTaskHandler(config);
+
+  const result = await handler.run(createTask());
+  const remoteHead = (
+    await runCommand("git", ["--git-dir", remoteRoot, "rev-parse", result.branchName])
+  ).trim();
+
+  assert.equal(remoteHead, result.commitSha);
+  assert.ok(result.summary.includes(`Pushed: origin/${result.branchName}`));
+});
+
 const createConfig = (overrides: Partial<RunnerConfig>): RunnerConfig => ({
   convexUrl: "https://example.convex.cloud",
   convexToken: undefined,
@@ -134,6 +266,8 @@ const createConfig = (overrides: Partial<RunnerConfig>): RunnerConfig => ({
   worktreeRoot: "",
   baseBranch: "main",
   piCommand: "",
+  pushOnSuccess: false,
+  pushRemote: "origin",
   ...overrides
 });
 
