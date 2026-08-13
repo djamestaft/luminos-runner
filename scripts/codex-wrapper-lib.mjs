@@ -32,7 +32,6 @@ export function buildCodexExecArgs({ worktreePath, outputPath, model, profile, c
     "exec",
     "--cd",
     worktreePath,
-    "--dangerously-bypass-approvals-and-sandbox",
     "--output-last-message",
     outputPath,
     "-"

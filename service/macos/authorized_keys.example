@@ -1,0 +1,1 @@
+restrict,command="/path/to/admin-owned/forced-command.sh",no-agent-forwarding,no-port-forwarding,no-pty,no-user-rc,no-X11-forwarding ssh-ed25519 AAAA_REPLACE_WITH_DEDICATED_VPS_BROKER_PUBLIC_KEY

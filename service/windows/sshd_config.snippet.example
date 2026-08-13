@@ -1,0 +1,9 @@
+Match User luminos-broker
+    ForceCommand powershell.exe -NoProfile -NonInteractive -File C:/protected/luminos-runner/service/windows/forced-command.ps1 -NodePath C:/Program Files/nodejs/node.exe -RunnerRoot C:/protected/luminos-runner -ConfigPath C:/protected/luminos-broker.env
+    DisableForwarding yes
+    AllowTcpForwarding no
+    PermitTTY no
+    X11Forwarding no
+    AllowAgentForwarding no
+    PermitTunnel no
+    PermitUserEnvironment no

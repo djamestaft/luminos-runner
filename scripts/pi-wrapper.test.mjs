@@ -112,6 +112,6 @@ test("buildCodexExecArgs builds a non-interactive codex exec command", () => {
 
   assert.equal(command.file, "codex.cmd");
   assert.deepEqual(command.args.slice(0, 5), ["exec", "--profile", "runner", "--model", "gpt-5-codex"]);
-  assert.ok(command.args.includes("--dangerously-bypass-approvals-and-sandbox"));
+  assert.ok(!command.args.includes("--dangerously-bypass-approvals-and-sandbox"));
   assert.ok(command.args.includes("--output-last-message"));
 });

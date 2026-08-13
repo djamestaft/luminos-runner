@@ -1,0 +1,8 @@
+#!/bin/sh
+# Install as an admin-owned, non-writable executable after replacing symbolic paths.
+set -eu
+if [ "$#" -ne 0 ] || [ -n "${SSH_ORIGINAL_COMMAND:-}" ]; then
+  echo '{"error":"remote_command_refused"}'
+  exit 126
+fi
+exec "/path/to/node" "/path/to/luminos-runner/dist/brokerCommandMain.js" --config "/path/to/protected/luminos-broker.env"
