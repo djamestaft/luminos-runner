@@ -9,12 +9,12 @@ const herdr: HerdrAdapter = { async create({ jobId }) { return { sessionId: `pri
 const create = () => new HostBroker(new Map([["lmns", policy]]), new MemoryJobRegistry(), git, herdr);
 
 test("creates an isolated logical job idempotently", async () => {
-  const broker = create(); const cmd = { contractVersion: CONTRACT_VERSION, verb: "create_job", jobId: "job_12345678", project: "lmns", profile: "default" };
+  const broker = create(); const cmd = { contractVersion: CONTRACT_VERSION, verb: "create_job", jobId: "job_12345678", project: "lmns", profile: "default", label:"bounded-task" };
   const first = await broker.execute(cmd); const second = await broker.execute(cmd);
   assert.equal(first.state, "ready"); assert.deepEqual(second, first); assert.equal("sessionId" in first, false);
 });
 test("refuses unknown project before adapters run", async () => {
-  const result = await create().execute({ contractVersion: CONTRACT_VERSION, verb: "create_job", jobId: "job_87654321", project: "attacker", profile: "default" });
+  const result = await create().execute({ contractVersion: CONTRACT_VERSION, verb: "create_job", jobId: "job_87654321", project: "attacker", profile: "default", label:"bounded-task" });
   assert.equal(result.category, "refused");
 });
 test("rejects pane injection at protocol boundary", async () => {
@@ -24,7 +24,7 @@ test("persists an uncertain mutation as unknown and refuses a duplicate prompt",
   let prompts = 0;
   const uncertainHerdr: HerdrAdapter = { ...herdr, async prompt() { prompts++; throw new Error("timeout"); } };
   const broker = new HostBroker(new Map([["lmns", policy]]), new MemoryJobRegistry(), git, uncertainHerdr);
-  await broker.execute({ contractVersion: CONTRACT_VERSION, verb: "create_job", jobId: "job_12345678", project: "lmns", profile: "default" });
+  await broker.execute({ contractVersion: CONTRACT_VERSION, verb: "create_job", jobId: "job_12345678", project: "lmns", profile: "default", label:"bounded-task" });
   const first = await broker.execute({ contractVersion: CONTRACT_VERSION, verb: "prompt_job", jobId: "job_12345678", taskText: "bounded task", timeoutMs: 1000 });
   const second = await broker.execute({ contractVersion: CONTRACT_VERSION, verb: "prompt_job", jobId: "job_12345678", taskText: "bounded task", timeoutMs: 1000 });
   assert.equal(first.state, "unknown"); assert.equal(second.category, "refused"); assert.equal(prompts, 1);

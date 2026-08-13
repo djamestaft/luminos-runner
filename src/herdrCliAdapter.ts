@@ -5,31 +5,46 @@ type HerdrStatus = "working" | "ready" | "unknown";
 const json = (text: string): Record<string, unknown> => JSON.parse(text) as Record<string, unknown>;
 const object = (value: unknown): Record<string, unknown> | undefined => typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 const result = (value: Record<string, unknown>) => object(value.result) ?? value;
-const status = (value: unknown): HerdrStatus => value === "working" ? "working" : value === "idle" || value === "done" || value === "blocked" ? "ready" : "unknown";
+const status = (value: unknown): HerdrStatus => value === "working" || value === "blocked" ? "working" : value === "idle" || value === "done" ? "ready" : "unknown";
+const agentStatus = (value: Record<string, unknown>): HerdrStatus => {
+  const resolved = result(value);
+  return status(object(resolved.agent)?.agent_status ?? resolved.agent_status);
+};
+const agentNameForJob = (jobId: string): string => `job-${jobId.replace(/^job_/, "").slice(0, 28)}`;
+const readableName = (label:string,jobId:string):string => { const suffix=jobId.replace(/^job_/,"").slice(0,8).toLowerCase();const slug=label.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,14).replace(/-$/g,"")||"task";return `discord-${slug}-${suffix}`; };
 
 export class HerdrCliAdapter implements HerdrAdapter {
   public constructor(private readonly executor: ProcessExecutor, private readonly agentKind: "codex" | "pi", private readonly binary = "herdr") {}
-  public async create(input: { jobId: string; cwd: string; profile: string }): Promise<{ sessionId: string }> {
-    const created = await this.call(["workspace", "create", "--cwd", input.cwd, "--label", `job-${input.jobId}`, "--no-focus"]);
+  public async create(input: { jobId: string; cwd: string; profile: string; label: string }): Promise<{ sessionId: string; workspaceId:string }> {
+    const agentName = readableName(input.label,input.jobId);
+    const created = await this.call(["workspace", "create", "--cwd", input.cwd, "--label", agentName, "--no-focus"]);
     const workspace = object(result(created).workspace); const workspaceId = workspace?.workspace_id;
     if (typeof workspaceId !== "string") throw new Error("herdr_create_failed");
     const snapshot = result(await this.call(["api", "snapshot"]));
     const snap = object(snapshot.snapshot); const panes = Array.isArray(snap?.panes) ? snap.panes : [];
     const pane = panes.map(object).find((candidate) => candidate?.workspace_id === workspaceId);
     if (typeof pane?.pane_id !== "string") throw new Error("herdr_create_failed");
-    const agentName = `job-${input.jobId}`;
     await this.call(["agent", "start", agentName, "--kind", this.agentKind, "--pane", pane.pane_id, "--timeout", "300000"], 305_000);
-    return { sessionId: agentName };
+    return { sessionId: agentName, workspaceId };
   }
   public async prompt(sessionId: string, text: string, timeoutMs: number): Promise<HerdrStatus> {
-    const response = await this.call(["agent", "prompt", sessionId, text, "--wait", "--until", "idle", "--until", "done", "--until", "blocked", "--until", "unknown", "--timeout", String(timeoutMs)], timeoutMs + 5_000, true);
+    const controlledTask = `${text}\n\nRunner handoff requirement: leave the requested changes committed on the current job branch before finishing. Do not include unrelated changes in that commit.`;
+    const response = await this.call(["agent", "prompt", sessionId, controlledTask, "--wait", "--until", "idle", "--until", "done", "--until", "blocked", "--until", "unknown", "--timeout", String(timeoutMs)], timeoutMs + 5_000, true);
     if (object(response.error)?.code === "timeout") return "unknown";
-    return status(result(response).agent_status);
+    return agentStatus(response);
   }
-  public async status(sessionId: string): Promise<HerdrStatus> { return status(result(await this.call(["agent", "get", sessionId])).agent_status); }
+  public async status(sessionId: string): Promise<HerdrStatus> { return agentStatus(await this.call(["agent", "get", sessionId])); }
   public async read(sessionId: string, maxLines: number): Promise<string> {
     const response = result(await this.call(["agent", "read", sessionId, "--source", "recent-unwrapped", "--lines", String(maxLines), "--format", "text"]));
     return typeof response.text === "string" ? response.text : "";
+  }
+  public async close(sessionId:string,workspaceId?:string):Promise<void>{
+    let resolved=workspaceId;
+    if(!resolved){const agent=result(await this.call(["agent","get",sessionId]));const candidate=object(agent.agent);if(typeof candidate?.workspace_id==="string")resolved=candidate.workspace_id;}
+    if(!resolved)throw new Error("herdr_workspace_unknown");
+    const response=await this.call(["workspace","close",resolved],30_000,true);
+    const code=object(response.error)?.code;
+    if(code!==undefined&&code!=="workspace_not_found")throw new Error("herdr_close_failed");
   }
   private async call(args: readonly string[], timeout?: number, allowError = false): Promise<Record<string, unknown>> {
     const output = await this.executor.run(this.binary, args, timeout);

@@ -14,7 +14,7 @@
     "services:check": "node scripts/validate-service-templates.mjs"
   },
   "dependencies": {
-    "@djamestaft/hermes-herdr-contracts": "file:../contracts",
+    "@djamestaft/hermes-herdr-contracts": "file:vendor/hermes-herdr-contracts",
     "convex": "^1.41.0",
     "dotenv": "^16.6.1"
   },
