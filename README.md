@@ -31,7 +31,7 @@ node dist/hostBrokerMain.js --config /path/to/protected/broker.env
 
 `service/macos/forced-command.sh.example` plus `authorized_keys.example` is the Devon equivalent of the Windows `forced-command.ps1`/`sshd_config` model. Both reject `SSH_ORIGINAL_COMMAND`, TTYs, forwarding, tunnels, agent forwarding, user environment, and arbitrary executables. The macOS launchd template has `RunAtLoad=false` and `KeepAlive=false`; templates are not activation.
 
-On Windows, first run `service/windows/test-runner.ps1` from elevated PowerShell. `install-runner.ps1` is validation-only unless `-Apply` is supplied; it checks the built broker files, required executables, and broad-write ACLs before registering `LuminosHerdrBroker`. The OpenSSH `ForceCommand`, dedicated non-administrator account, authorized key, tailnet policy, and VPS `GREG_SSH_TARGET` remain separate explicit gates.
+On Windows, first run `service/windows/test-runner.ps1` from elevated PowerShell. `install-runner.ps1` is validation-only unless `-Apply` is supplied; it then copies a versioned release below `C:\Program Files\Luminos\releases` and makes it read-only to the broker account. OpenSSH invokes one forced-command request at a time—there is no persistent scheduled broker task. The dedicated non-administrator account, authorized key, tailnet policy, and VPS `GREG_SSH_TARGET` remain separate explicit gates.
 
 ## Validation
 
