@@ -29,6 +29,10 @@ test("persists an uncertain mutation as unknown and refuses a duplicate prompt",
   const second = await broker.execute({ contractVersion: CONTRACT_VERSION, verb: "prompt_job", jobId: "job_12345678", taskText: "bounded task", timeoutMs: 1000 });
   assert.equal(first.state, "unknown"); assert.equal(second.category, "refused"); assert.equal(prompts, 1);
 });
+test("recovery proves an absent job is safe to recreate",async()=>{
+  const recovered=await create().execute({contractVersion:CONTRACT_VERSION,verb:"recover_job",jobId:"job_12345678"});
+  assert.deepEqual(recovered,{contractVersion:CONTRACT_VERSION,jobId:"job_12345678",state:"ready",category:"ok",summary:"job absent; safe to recreate"});
+});
 test("recovery returns durable handoff evidence without rerunning work",async()=>{
   const handoffGit:GitWorkspaceAdapter={...git,async handoff(){return{commitSha:"a".repeat(40),prUrl:"https://github.com/org/repo/pull/1"};}};
   const broker=new HostBroker(new Map([["lmns",policy]]),new MemoryJobRegistry(),handoffGit,herdr);

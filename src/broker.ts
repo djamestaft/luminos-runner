@@ -25,7 +25,12 @@ export class HostBroker {
       const policy=this.policies.get(command.project);if(!policy||!policy.profiles.includes(command.profile))return{contractVersion:CONTRACT_VERSION,jobId:command.jobId,state:"refused",category:"refused"};
       return this.lock(`project-${command.project}`,async()=>{const repeated=await this.registry.get(command.jobId);if(repeated)return this.result(repeated,"ok");const workspace=await this.git.create({jobId:command.jobId,policy});const session=await this.herdr.create({jobId:command.jobId,cwd:workspace.cwd,profile:command.profile,label:command.label});const job:LocalJob={jobId:command.jobId,project:command.project,profile:command.profile,state:"ready",sessionId:session.sessionId,workspaceId:session.workspaceId,branch:workspace.branch};await this.registry.put(job);return this.result(job,"ok");});
     }
-    const job=await this.registry.get(command.jobId);if(!job)return{contractVersion:CONTRACT_VERSION,jobId:command.jobId,state:"refused",category:"refused"};
+    const job=await this.registry.get(command.jobId);
+    // Recovery is the explicit coordinator proof step after an indeterminate
+    // transport result. A missing durable job proves create did not commit, so
+    // report ready and let the coordinator safely retry the idempotent create.
+    if(!job&&command.verb==="recover_job")return{contractVersion:CONTRACT_VERSION,jobId:command.jobId,state:"ready",category:"ok",summary:"job absent; safe to recreate"};
+    if(!job)return{contractVersion:CONTRACT_VERSION,jobId:command.jobId,state:"refused",category:"refused"};
     if(command.verb==="prompt_job"){if(job.state!=="ready")return this.result(job,"refused");const state=await this.herdr.prompt(job.sessionId,command.taskText,command.timeoutMs);job.state=state;await this.registry.put(job);return this.result(job,state==="unknown"?"unknown":"ok");}
     if(command.verb==="job_status"){if(!["ready","working","unknown"].includes(job.state))return this.result(job,"ok");job.state=await this.herdr.status(job.sessionId);await this.registry.put(job);return this.result(job,job.state==="unknown"?"unknown":"ok");}
     if(command.verb==="read_job"){if(!["ready","working","unknown"].includes(job.state))return this.result(job,"refused");const summary=redactText(await this.herdr.read(job.sessionId,command.maxLines));return{...this.result(job,"ok"),summary};}
