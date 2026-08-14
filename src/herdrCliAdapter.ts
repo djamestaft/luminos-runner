@@ -14,10 +14,13 @@ const agentNameForJob = (jobId: string): string => `job-${jobId.replace(/^job_/,
 const readableName = (label:string,jobId:string):string => { const suffix=jobId.replace(/^job_/,"").slice(0,8).toLowerCase();const slug=label.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,14).replace(/-$/g,"")||"task";return `discord-${slug}-${suffix}`; };
 
 export class HerdrCliAdapter implements HerdrAdapter {
-  public constructor(private readonly executor: ProcessExecutor, private readonly agentKind: "codex" | "pi", private readonly binary = "herdr") {}
+  public constructor(private readonly executor: ProcessExecutor, private readonly agentKind: "codex" | "pi", private readonly binary = "herdr", private readonly shellZdotdir?: string) {}
   public async create(input: { jobId: string; cwd: string; profile: string; label: string }): Promise<{ sessionId: string; workspaceId:string }> {
     const agentName = readableName(input.label,input.jobId);
-    const created = await this.call(["workspace", "create", "--cwd", input.cwd, "--label", agentName, "--no-focus"]);
+    const workspaceArgs = ["workspace", "create", "--cwd", input.cwd, "--label", agentName];
+    if (this.shellZdotdir) workspaceArgs.push("--env", `ZDOTDIR=${this.shellZdotdir}`);
+    workspaceArgs.push("--no-focus");
+    const created = await this.call(workspaceArgs);
     const workspace = object(result(created).workspace); const workspaceId = workspace?.workspace_id;
     if (typeof workspaceId !== "string") throw new Error("herdr_create_failed");
     const snapshot = result(await this.call(["api", "snapshot"]));
