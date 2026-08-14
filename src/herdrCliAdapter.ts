@@ -12,6 +12,7 @@ const agentStatus = (value: Record<string, unknown>): HerdrStatus => {
 };
 const agentNameForJob = (jobId: string): string => `job-${jobId.replace(/^job_/, "").slice(0, 28)}`;
 const readableName = (label:string,jobId:string):string => { const suffix=jobId.replace(/^job_/,"").slice(0,8).toLowerCase();const slug=label.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,14).replace(/-$/g,"")||"task";return `discord-${slug}-${suffix}`; };
+const pause=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
 
 export class HerdrCliAdapter implements HerdrAdapter {
   public constructor(private readonly executor: ProcessExecutor, private readonly agentKind: "codex" | "pi", private readonly binary = "herdr", private readonly shellZdotdir?: string) {}
@@ -29,7 +30,7 @@ export class HerdrCliAdapter implements HerdrAdapter {
     if (typeof pane?.pane_id !== "string") throw new Error("herdr_create_failed");
     const startArgs = ["agent", "start", agentName, "--kind", this.agentKind, "--pane", pane.pane_id, "--timeout", "300000"];
     if (this.agentKind === "codex") startArgs.push("--", "--yolo");
-    await this.call(startArgs, 305_000);
+    await this.startAgent(agentName,startArgs);
     return { sessionId: agentName, workspaceId };
   }
   public async prompt(sessionId: string, text: string, timeoutMs: number): Promise<HerdrStatus> {
@@ -50,6 +51,17 @@ export class HerdrCliAdapter implements HerdrAdapter {
     const response=await this.call(["workspace","close",resolved],30_000,true);
     const code=object(response.error)?.code;
     if(code!==undefined&&code!=="workspace_not_found")throw new Error("herdr_close_failed");
+  }
+  private async startAgent(agentName:string,args:readonly string[]):Promise<void>{
+    for(let attempt=0;attempt<10;attempt++){
+      try{await this.call(args,305_000);return;}catch(error){
+        // A response can be lost after launch. Check the durable Herdr name
+        // before retrying so startup remains at-most-once.
+        try{await this.call(["agent","get",agentName],5_000);return;}catch{/* The shell may not be ready yet. */}
+        if(attempt===9)throw error;
+        await pause(500);
+      }
+    }
   }
   private async call(args: readonly string[], timeout?: number, allowError = false): Promise<Record<string, unknown>> {
     const output = await this.executor.run(this.binary, args, timeout);
