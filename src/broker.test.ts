@@ -29,3 +29,11 @@ test("persists an uncertain mutation as unknown and refuses a duplicate prompt",
   const second = await broker.execute({ contractVersion: CONTRACT_VERSION, verb: "prompt_job", jobId: "job_12345678", taskText: "bounded task", timeoutMs: 1000 });
   assert.equal(first.state, "unknown"); assert.equal(second.category, "refused"); assert.equal(prompts, 1);
 });
+test("recovery returns durable handoff evidence without rerunning work",async()=>{
+  const handoffGit:GitWorkspaceAdapter={...git,async handoff(){return{commitSha:"a".repeat(40),prUrl:"https://github.com/org/repo/pull/1"};}};
+  const broker=new HostBroker(new Map([["lmns",policy]]),new MemoryJobRegistry(),handoffGit,herdr);
+  await broker.execute({contractVersion:CONTRACT_VERSION,verb:"create_job",jobId:"job_12345678",project:"lmns",profile:"default",label:"bounded-task"});
+  await broker.execute({contractVersion:CONTRACT_VERSION,verb:"handoff_job",jobId:"job_12345678"});
+  const recovered=await broker.execute({contractVersion:CONTRACT_VERSION,verb:"recover_job",jobId:"job_12345678"});
+  assert.deepEqual(recovered,{contractVersion:CONTRACT_VERSION,jobId:"job_12345678",state:"handoff_ready",category:"ok",branch:"jobs/job_12345678",commitSha:"a".repeat(40),prUrl:"https://github.com/org/repo/pull/1"});
+});
