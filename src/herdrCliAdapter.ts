@@ -41,8 +41,11 @@ export class HerdrCliAdapter implements HerdrAdapter {
   }
   public async status(sessionId: string): Promise<HerdrStatus> { return agentStatus(await this.call(["agent", "get", sessionId])); }
   public async read(sessionId: string, maxLines: number): Promise<string> {
-    const response = result(await this.call(["agent", "read", sessionId, "--source", "recent-unwrapped", "--lines", String(maxLines)]));
-    return typeof response.text === "string" ? response.text : "";
+    // Unlike Herdr's control commands, `agent read` writes the bounded
+    // transcript directly to stdout instead of returning a JSON envelope.
+    const output = await this.executor.run(this.binary, ["agent", "read", sessionId, "--source", "recent-unwrapped", "--lines", String(maxLines)]);
+    if (output.exitCode !== 0) throw new Error("herdr_command_failed");
+    return output.stdout;
   }
   public async close(sessionId:string,workspaceId?:string):Promise<void>{
     let resolved=workspaceId;
