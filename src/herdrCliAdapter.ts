@@ -27,7 +27,9 @@ export class HerdrCliAdapter implements HerdrAdapter {
     const snap = object(snapshot.snapshot); const panes = Array.isArray(snap?.panes) ? snap.panes : [];
     const pane = panes.map(object).find((candidate) => candidate?.workspace_id === workspaceId);
     if (typeof pane?.pane_id !== "string") throw new Error("herdr_create_failed");
-    await this.call(["agent", "start", agentName, "--kind", this.agentKind, "--pane", pane.pane_id, "--timeout", "300000"], 305_000);
+    const startArgs = ["agent", "start", agentName, "--kind", this.agentKind, "--pane", pane.pane_id, "--timeout", "300000"];
+    if (this.agentKind === "codex") startArgs.push("--", "--yolo");
+    await this.call(startArgs, 305_000);
     return { sessionId: agentName, workspaceId };
   }
   public async prompt(sessionId: string, text: string, timeoutMs: number): Promise<HerdrStatus> {
@@ -38,7 +40,7 @@ export class HerdrCliAdapter implements HerdrAdapter {
   }
   public async status(sessionId: string): Promise<HerdrStatus> { return agentStatus(await this.call(["agent", "get", sessionId])); }
   public async read(sessionId: string, maxLines: number): Promise<string> {
-    const response = result(await this.call(["agent", "read", sessionId, "--source", "recent-unwrapped", "--lines", String(maxLines), "--format", "text"]));
+    const response = result(await this.call(["agent", "read", sessionId, "--source", "recent-unwrapped", "--lines", String(maxLines)]));
     return typeof response.text === "string" ? response.text : "";
   }
   public async close(sessionId:string,workspaceId?:string):Promise<void>{
