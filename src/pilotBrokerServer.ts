@@ -14,23 +14,29 @@ export const startPilotBrokerServer = async (endpoint: string, broker: PilotBrok
     const chunks: Buffer[] = [];
     let size = 0;
     let handled = false;
-    socket.on("data", (chunk: Buffer) => {
-      size += chunk.length;
-      if (size > MAX_PILOT_REQUEST_BYTES) socket.destroy(new Error("message_too_large"));
-      else chunks.push(chunk);
-    });
-    socket.on("end", async () => {
+    const handleRequest = async () => {
       if (handled || socket.destroyed) return;
       handled = true;
       try {
-        const result = await broker.execute(parseSingleJson(Buffer.concat(chunks), MAX_PILOT_REQUEST_BYTES));
+        const framed = Buffer.concat(chunks);
+        const request = framed.at(-1) === 0x0a ? framed.subarray(0, -1) : framed;
+        const result = await broker.execute(parseSingleJson(request, MAX_PILOT_REQUEST_BYTES));
         const output = Buffer.from(JSON.stringify(result) + "\n");
         if (output.length > MAX_PILOT_RESPONSE_BYTES) throw new Error("response_too_large");
         socket.end(output);
       } catch (error) {
         socket.end(JSON.stringify({ error: pilotFailureCategory(error) }) + "\n");
       }
+    };
+    socket.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_PILOT_REQUEST_BYTES + 1) socket.destroy(new Error("message_too_large"));
+      else {
+        chunks.push(chunk);
+        if (chunk.includes(0x0a)) void handleRequest();
+      }
     });
+    socket.on("end", () => { void handleRequest(); });
     socket.on("error", () => undefined);
     socket.on("close", () => sockets.delete(socket));
   });
