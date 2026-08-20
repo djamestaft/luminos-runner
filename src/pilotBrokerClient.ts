@@ -1,13 +1,14 @@
 import net from "node:net";
-import { MAX_PILOT_REQUEST_BYTES, MAX_PILOT_RESPONSE_BYTES, PILOT_IO_TIMEOUT_MS, parseSingleJson } from "./pilotBrokerIpc.js";
+import { MAX_PILOT_REQUEST_BYTES, MAX_PILOT_RESPONSE_BYTES, parseSingleJson, pilotRequestTimeoutMs } from "./pilotBrokerIpc.js";
 
-export const sendPilotRequest = async (endpoint: string, request: Buffer, timeoutMs = PILOT_IO_TIMEOUT_MS): Promise<Buffer> => {
+export const sendPilotRequest = async (endpoint: string, request: Buffer, timeoutMs?: number): Promise<Buffer> => {
   parseSingleJson(request, MAX_PILOT_REQUEST_BYTES);
+  const effectiveTimeoutMs = timeoutMs ?? pilotRequestTimeoutMs(request);
   return new Promise<Buffer>((resolve, reject) => {
     const socket = net.createConnection(endpoint);
     const chunks: Buffer[] = [];
     let size = 0;
-    const timer = setTimeout(() => socket.destroy(new Error("timeout")), timeoutMs);
+    const timer = setTimeout(() => socket.destroy(new Error("timeout")), effectiveTimeoutMs);
     const finish = (action: () => void) => { clearTimeout(timer); action(); };
     // Windows named pipes do not provide a portable TCP-style half-close. Keep
     // the writable side open and delimit the single request with LF; the server

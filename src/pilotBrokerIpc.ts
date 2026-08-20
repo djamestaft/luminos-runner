@@ -1,9 +1,12 @@
 import { readFile } from "node:fs/promises";
+import { MAX_TIMEOUT_MS, parseBrokerCommand } from "@djamestaft/hermes-herdr-contracts";
 
 export const PILOT_PROTOCOL_VERSION = 1;
 export const MAX_PILOT_REQUEST_BYTES = 65_536;
 export const MAX_PILOT_RESPONSE_BYTES = 65_536;
 export const PILOT_IO_TIMEOUT_MS = 30_000;
+export const PILOT_IO_TIMEOUT_GRACE_MS = 10_000;
+export const PILOT_MAX_IO_TIMEOUT_MS = MAX_TIMEOUT_MS + PILOT_IO_TIMEOUT_GRACE_MS;
 const PIPE = /^\\\\\.\\pipe\\luminos-greg-pilot-[a-f0-9]{32}$/;
 
 export interface PilotDescriptor {
@@ -42,6 +45,19 @@ export const parseSingleJson = (data: Buffer, maximum: number): unknown => {
   const text = data.toString("utf8");
   if (text.includes("\0") || text.trim().split(/\r?\n/).length !== 1) throw new Error("exactly_one_request_required");
   try { return JSON.parse(text); } catch { throw new Error("invalid_message"); }
+};
+
+export const pilotRequestTimeoutMs = (request: Buffer): number => {
+  try {
+    const command = parseBrokerCommand(parseSingleJson(request, MAX_PILOT_REQUEST_BYTES));
+    if (command.verb === "prompt_job") {
+      return Math.min(PILOT_MAX_IO_TIMEOUT_MS, Math.max(PILOT_IO_TIMEOUT_MS, command.timeoutMs + PILOT_IO_TIMEOUT_GRACE_MS));
+    }
+  } catch {
+    // Malformed requests still reach the broker for its authoritative refusal,
+    // but never obtain a longer transport window from untrusted fields.
+  }
+  return PILOT_IO_TIMEOUT_MS;
 };
 
 export const pilotFailureCategory = (error: unknown): string => {

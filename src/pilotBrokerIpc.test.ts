@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { sendPilotRequest } from "./pilotBrokerClient.js";
-import { MAX_PILOT_REQUEST_BYTES, parsePilotDescriptor, parseSingleJson, pilotFailureCategory, validatePilotPipeName } from "./pilotBrokerIpc.js";
+import { CONTRACT_VERSION } from "@djamestaft/hermes-herdr-contracts";
+import { MAX_PILOT_REQUEST_BYTES, PILOT_IO_TIMEOUT_MS, PILOT_MAX_IO_TIMEOUT_MS, parsePilotDescriptor, parseSingleJson, pilotFailureCategory, pilotRequestTimeoutMs, validatePilotPipeName } from "./pilotBrokerIpc.js";
 import { startPilotBrokerServer } from "./pilotBrokerServer.js";
 
 const pipe = "\\\\.\\pipe\\luminos-greg-pilot-0123456789abcdef0123456789abcdef";
@@ -29,6 +30,22 @@ test("framing accepts one bounded JSON value only", () => {
 test("failure categories never expose socket details", () => {
   assert.equal(pilotFailureCategory(new Error("connect ENOENT /private/path")), "pilot_unavailable");
   assert.equal(pilotFailureCategory(new Error("timeout")), "timeout");
+});
+
+test("only a valid prompt command extends the bounded client timeout", () => {
+  const prompt = (timeoutMs: number) => Buffer.from(JSON.stringify({
+    contractVersion: CONTRACT_VERSION,
+    verb: "prompt_job",
+    jobId: "job_12345678",
+    taskText: "bounded task",
+    timeoutMs,
+  }));
+  assert.equal(pilotRequestTimeoutMs(Buffer.from(JSON.stringify({ contractVersion: CONTRACT_VERSION, verb: "job_status", jobId: "job_12345678" }))), PILOT_IO_TIMEOUT_MS);
+  assert.equal(pilotRequestTimeoutMs(prompt(1_000)), PILOT_IO_TIMEOUT_MS);
+  assert.equal(pilotRequestTimeoutMs(prompt(120_000)), 130_000);
+  assert.equal(pilotRequestTimeoutMs(prompt(900_000)), PILOT_MAX_IO_TIMEOUT_MS);
+  assert.equal(pilotRequestTimeoutMs(Buffer.from(JSON.stringify({ contractVersion: CONTRACT_VERSION, verb: "prompt_job", jobId: "job_12345678", taskText: "bounded task", timeoutMs: 900_001 }))), PILOT_IO_TIMEOUT_MS);
+  assert.equal(pilotRequestTimeoutMs(Buffer.from(JSON.stringify({ verb: "prompt_job", timeoutMs: 900_000 }))), PILOT_IO_TIMEOUT_MS);
 });
 
 test("IPC forwards one request and shutdown rejects traffic", async () => {
