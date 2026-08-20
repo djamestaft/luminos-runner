@@ -35,7 +35,11 @@ export class HerdrCliAdapter implements HerdrAdapter {
   }
   public async prompt(sessionId: string, text: string, timeoutMs: number): Promise<HerdrStatus> {
     const controlledTask = `${text}\n\nRunner handoff requirement: leave the requested changes committed on the current job branch before finishing. Do not include unrelated changes in that commit.`;
-    const response = await this.call(["agent", "prompt", sessionId, controlledTask, "--wait", "--until", "idle", "--until", "done", "--until", "blocked", "--until", "unknown", "--timeout", String(timeoutMs)], timeoutMs + 5_000, true);
+    // Herdr's default --wait contract settles only when the agent is idle,
+    // done, or blocked. Treating `unknown` as a requested terminal state lets
+    // a transient detector result win the race and incorrectly persists a
+    // running job as unknown even though the agent continues successfully.
+    const response = await this.call(["agent", "prompt", sessionId, controlledTask, "--wait", "--timeout", String(timeoutMs)], timeoutMs + 5_000, true);
     if (object(response.error)?.code === "timeout") return "unknown";
     return agentStatus(response);
   }
