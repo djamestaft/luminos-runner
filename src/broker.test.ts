@@ -17,6 +17,11 @@ test("refuses unknown project before adapters run", async () => {
   const result = await create().execute({ contractVersion: CONTRACT_VERSION, verb: "create_job", jobId: "job_87654321", project: "attacker", profile: "default", label:"bounded-task" });
   assert.equal(result.category, "refused");
 });
+test("returns a bounded Windows Herdr launch code without leaking process details",async()=>{
+  const failedHerdr:HerdrAdapter={...herdr,async create(){throw new Error("herdr_process_start_failed_enoent");}};
+  const result=await new HostBroker(new Map([["lmns",policy]]),new MemoryJobRegistry(),git,failedHerdr).execute({contractVersion:CONTRACT_VERSION,verb:"create_job",jobId:"job_12345678",project:"lmns",profile:"default",label:"bounded-task"});
+  assert.equal(result.state,"unknown");assert.equal(result.summary,"herdr_process_start_failed_enoent");assert.doesNotMatch(JSON.stringify(result),/path|command|argument|environment/i);
+});
 test("rejects pane injection at protocol boundary", async () => {
   await assert.rejects(() => create().execute({ contractVersion: CONTRACT_VERSION, verb: "job_status", jobId: "job_12345678", pane: "wJ:p8" }), /Unsupported field/);
 });

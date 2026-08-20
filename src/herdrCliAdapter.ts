@@ -13,9 +13,10 @@ const agentStatus = (value: Record<string, unknown>): HerdrStatus => {
 const agentNameForJob = (jobId: string): string => `job-${jobId.replace(/^job_/, "").slice(0, 28)}`;
 const readableName = (label:string,jobId:string):string => { const suffix=jobId.replace(/^job_/,"").slice(0,8).toLowerCase();const slug=label.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,14).replace(/-$/g,"")||"task";return `discord-${slug}-${suffix}`; };
 const pause=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
+export const herdrBinaryForPlatform=(platform:NodeJS.Platform):string=>platform==="win32"?"herdr.cmd":"herdr";
 
 export class HerdrCliAdapter implements HerdrAdapter {
-  public constructor(private readonly executor: ProcessExecutor, private readonly agentKind: "codex" | "pi", private readonly binary = "herdr", private readonly shellZdotdir?: string) {}
+  public constructor(private readonly executor: ProcessExecutor, private readonly agentKind: "codex" | "pi", private readonly binary = herdrBinaryForPlatform(process.platform), private readonly shellZdotdir?: string) {}
   public async create(input: { jobId: string; cwd: string; profile: string; label: string }): Promise<{ sessionId: string; workspaceId:string }> {
     const agentName = readableName(input.label,input.jobId);
     const workspaceArgs = ["workspace", "create", "--cwd", input.cwd, "--label", agentName];
@@ -71,7 +72,15 @@ export class HerdrCliAdapter implements HerdrAdapter {
     }
   }
   private async call(args: readonly string[], timeout?: number, allowError = false): Promise<Record<string, unknown>> {
-    const output = await this.executor.run(this.binary, args, timeout);
+    let output;
+    try { output = await this.executor.run(this.binary, args, timeout); }
+    catch(error) {
+      const code = typeof error === "object" && error !== null && "code" in error ? String(error.code).toUpperCase() : "";
+      if (code === "ENOENT") throw new Error("herdr_process_start_failed_enoent");
+      if (error instanceof Error && error.message === "process_timeout") throw error;
+      if (error instanceof Error && error.message === "process_output_too_large") throw error;
+      throw new Error("herdr_process_start_failed");
+    }
     let parsed: Record<string, unknown>; try { parsed = json(output.stdout); } catch { throw new Error("herdr_protocol_error"); }
     if (output.exitCode !== 0 && !allowError) throw new Error("herdr_command_failed");
     return parsed;
