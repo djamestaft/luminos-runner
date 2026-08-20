@@ -15,7 +15,7 @@ This package is the only machine-side executor for the Hermes-native runner pool
 
 ## Protected configuration
 
-Copy `.env.example` to an out-of-repository protected location. On POSIX, the broker refuses a file accessible to group/other users. Only documented `BROKER_*` keys are accepted. GitHub and SSH credentials remain in the owning account's protected credential stores and are not protocol fields.
+Copy `.env.example` to an out-of-repository protected location. On POSIX, the broker refuses a config or GitHub token file accessible to group/other users. On Windows, the install and forced-command scripts reject token files accessible to broad principals such as `Users`, `Authenticated Users`, or `Everyone`. Only documented `BROKER_*` keys are accepted. `BROKER_GITHUB_TOKEN_FILE` names an absolute, host-local file containing the GitHub CLI token; the runner loads it once and exposes it only to `gh` subprocesses. GitHub and SSH credentials are never protocol fields.
 
 One-request constrained entry point:
 

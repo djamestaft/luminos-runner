@@ -19,6 +19,12 @@ foreach ($relative in @('dist/hostBrokerMain.js','dist/brokerCommandMain.js','di
 foreach ($command in @('git.exe','gh.exe','herdr.exe')) { if (!(Get-Command $command -ErrorAction SilentlyContinue)) { throw "Required command is unavailable: $command" } }
 $forbidden = Get-Acl -LiteralPath $ConfigPath | Select-Object -ExpandProperty Access | Where-Object { $_.IdentityReference -match '(Everyone|BUILTIN\\Users|Authenticated Users)$' -and $_.FileSystemRights -match '(Write|Modify|FullControl)' }
 if ($forbidden) { throw 'Broker configuration is writable by a broad Windows principal' }
+$tokenLine = Get-Content -LiteralPath $ConfigPath | Where-Object { $_.Trim().StartsWith('BROKER_GITHUB_TOKEN_FILE=') } | Select-Object -Last 1
+if (!$tokenLine) { throw 'Broker configuration must declare BROKER_GITHUB_TOKEN_FILE' }
+$tokenPath = $tokenLine.Substring($tokenLine.IndexOf('=') + 1).Trim()
+if (!$tokenPath -or ![System.IO.Path]::IsPathFullyQualified($tokenPath) -or !(Test-Path -LiteralPath $tokenPath -PathType Leaf)) { throw 'BROKER_GITHUB_TOKEN_FILE must be an existing absolute file' }
+$broadTokenAccess = Get-Acl -LiteralPath $tokenPath | Select-Object -ExpandProperty Access | Where-Object { $_.IdentityReference -match '(Everyone|BUILTIN\\Users|Authenticated Users)$' -and $_.FileSystemRights -match '(Read|Write|Modify|FullControl)' }
+if ($broadTokenAccess) { throw 'GitHub token file is accessible by a broad Windows principal' }
 if (!$Apply) { Write-Host "Validation passed. Re-run with -Apply to install the immutable release at $InstallRoot."; exit 0 }
 if (Test-Path -LiteralPath $InstallRoot) { throw 'InstallRoot already exists; use a new versioned release directory' }
 New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
