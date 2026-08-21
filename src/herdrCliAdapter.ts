@@ -13,25 +13,34 @@ const agentStatus = (value: Record<string, unknown>): HerdrStatus => {
 const agentNameForJob = (jobId: string): string => `job-${jobId.replace(/^job_/, "").slice(0, 28)}`;
 const readableName = (label:string,jobId:string):string => { const suffix=jobId.replace(/^job_/,"").slice(0,8).toLowerCase();const slug=label.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,14).replace(/-$/g,"")||"task";return `discord-${slug}-${suffix}`; };
 const pause=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
-export const herdrBinaryForPlatform=(platform:NodeJS.Platform):string=>platform==="win32"?"herdr.cmd":"herdr";
+export const herdrBinaryForPlatform=(_platform:NodeJS.Platform):string=>"herdr";
 
 export class HerdrCliAdapter implements HerdrAdapter {
   public constructor(private readonly executor: ProcessExecutor, private readonly agentKind: "codex" | "pi", private readonly binary = herdrBinaryForPlatform(process.platform), private readonly shellZdotdir?: string) {}
   public async create(input: { jobId: string; cwd: string; profile: string; label: string }): Promise<{ sessionId: string; workspaceId:string }> {
     const agentName = readableName(input.label,input.jobId);
-    const workspaceArgs = ["workspace", "create", "--cwd", input.cwd, "--label", agentName];
-    if (this.shellZdotdir) workspaceArgs.push("--env", `ZDOTDIR=${this.shellZdotdir}`);
-    workspaceArgs.push("--no-focus");
-    const created = await this.call(workspaceArgs);
-    const workspace = object(result(created).workspace); const workspaceId = workspace?.workspace_id;
-    if (typeof workspaceId !== "string") throw new Error("herdr_create_failed");
-    const snapshot = result(await this.call(["api", "snapshot"]));
-    const snap = object(snapshot.snapshot); const panes = Array.isArray(snap?.panes) ? snap.panes : [];
-    const pane = panes.map(object).find((candidate) => candidate?.workspace_id === workspaceId);
-    if (typeof pane?.pane_id !== "string") throw new Error("herdr_create_failed");
-    const startArgs = ["agent", "start", agentName, "--kind", this.agentKind, "--pane", pane.pane_id, "--timeout", "300000"];
-    if (this.agentKind === "codex") startArgs.push("--", "--yolo");
-    await this.startAgent(agentName,startArgs);
+    let workspaceId:string;
+    try {
+      const workspaceArgs = ["workspace", "create", "--cwd", input.cwd, "--label", agentName];
+      if (this.shellZdotdir) workspaceArgs.push("--env", `ZDOTDIR=${this.shellZdotdir}`);
+      workspaceArgs.push("--no-focus");
+      const workspace = object(result(await this.call(workspaceArgs)).workspace);
+      if (typeof workspace?.workspace_id !== "string") throw new Error("invalid_workspace");
+      workspaceId=workspace.workspace_id;
+    } catch { throw new Error("herdr_workspace_create_failed"); }
+    let paneId:string;
+    try {
+      const snapshot = result(await this.call(["api", "snapshot"]));
+      const snap = object(snapshot.snapshot); const panes = Array.isArray(snap?.panes) ? snap.panes : [];
+      const pane = panes.map(object).find((candidate) => candidate?.workspace_id === workspaceId);
+      if (typeof pane?.pane_id !== "string") throw new Error("invalid_pane");
+      paneId=pane.pane_id;
+    } catch { throw new Error("herdr_snapshot_lookup_failed"); }
+    try {
+      const startArgs = ["agent", "start", agentName, "--kind", this.agentKind, "--pane", paneId, "--timeout", "300000"];
+      if (this.agentKind === "codex") startArgs.push("--", "--yolo");
+      await this.startAgent(agentName,startArgs);
+    } catch { throw new Error("herdr_agent_start_failed"); }
     return { sessionId: agentName, workspaceId };
   }
   public async prompt(sessionId: string, text: string, timeoutMs: number): Promise<HerdrStatus> {
