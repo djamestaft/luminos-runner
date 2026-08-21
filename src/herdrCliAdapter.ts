@@ -1,9 +1,10 @@
 import type { HerdrAdapter } from "./broker.js";
+import { herdrCreateDiagnostic, normalizeHerdrServerErrorCode, SanitizedHerdrServerError, sanitizedHerdrServerCode, type HerdrCreatePhase } from "./herdrErrorDiagnostics.js";
 import type { ProcessExecutor } from "./processExecutor.js";
 
 type HerdrStatus = "working" | "ready" | "unknown";
-const json = (text: string): Record<string, unknown> => JSON.parse(text) as Record<string, unknown>;
 const object = (value: unknown): Record<string, unknown> | undefined => typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+const jsonObject = (text: string): Record<string, unknown> | undefined => { try { return object(JSON.parse(text)); } catch { return undefined; } };
 const result = (value: Record<string, unknown>) => object(value.result) ?? value;
 const status = (value: unknown): HerdrStatus => value === "working" || value === "blocked" ? "working" : value === "idle" || value === "done" ? "ready" : "unknown";
 const agentStatus = (value: Record<string, unknown>): HerdrStatus => {
@@ -13,6 +14,7 @@ const agentStatus = (value: Record<string, unknown>): HerdrStatus => {
 const agentNameForJob = (jobId: string): string => `job-${jobId.replace(/^job_/, "").slice(0, 28)}`;
 const readableName = (label:string,jobId:string):string => { const suffix=jobId.replace(/^job_/,"").slice(0,8).toLowerCase();const slug=label.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,14).replace(/-$/g,"")||"task";return `discord-${slug}-${suffix}`; };
 const pause=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
+const createFailure = (phase: HerdrCreatePhase, error: unknown): Error => new Error(herdrCreateDiagnostic(phase, sanitizedHerdrServerCode(error)));
 export const herdrBinaryForPlatform=(_platform:NodeJS.Platform):string=>"herdr";
 
 export class HerdrCliAdapter implements HerdrAdapter {
@@ -27,7 +29,7 @@ export class HerdrCliAdapter implements HerdrAdapter {
       const workspace = object(result(await this.call(workspaceArgs)).workspace);
       if (typeof workspace?.workspace_id !== "string") throw new Error("invalid_workspace");
       workspaceId=workspace.workspace_id;
-    } catch { throw new Error("herdr_workspace_create_failed"); }
+    } catch (error) { throw createFailure("herdr_workspace_create_failed", error); }
     let paneId:string;
     try {
       const snapshot = result(await this.call(["api", "snapshot"]));
@@ -35,12 +37,12 @@ export class HerdrCliAdapter implements HerdrAdapter {
       const pane = panes.map(object).find((candidate) => candidate?.workspace_id === workspaceId);
       if (typeof pane?.pane_id !== "string") throw new Error("invalid_pane");
       paneId=pane.pane_id;
-    } catch { throw new Error("herdr_snapshot_lookup_failed"); }
+    } catch (error) { throw createFailure("herdr_snapshot_lookup_failed", error); }
     try {
       const startArgs = ["agent", "start", agentName, "--kind", this.agentKind, "--pane", paneId, "--timeout", "300000"];
       if (this.agentKind === "codex") startArgs.push("--", "--yolo");
       await this.startAgent(agentName,startArgs);
-    } catch { throw new Error("herdr_agent_start_failed"); }
+    } catch (error) { throw createFailure("herdr_agent_start_failed", error); }
     return { sessionId: agentName, workspaceId };
   }
   public async prompt(sessionId: string, text: string, timeoutMs: number): Promise<HerdrStatus> {
@@ -90,8 +92,21 @@ export class HerdrCliAdapter implements HerdrAdapter {
       if (error instanceof Error && error.message === "process_output_too_large") throw error;
       throw new Error("herdr_process_start_failed");
     }
-    let parsed: Record<string, unknown>; try { parsed = json(output.stdout); } catch { throw new Error("herdr_protocol_error"); }
-    if (output.exitCode !== 0 && !allowError) throw new Error("herdr_command_failed");
-    return parsed;
+    if (output.exitCode === 0) {
+      const parsed = jsonObject(output.stdout);
+      if (!parsed) throw new Error("herdr_protocol_error");
+      return parsed;
+    }
+    if (output.exitCode === 1) {
+      const envelope = jsonObject(output.stderr);
+      const error = object(envelope?.error);
+      const code = typeof error?.message === "string" ? normalizeHerdrServerErrorCode(error.code) : undefined;
+      if (code) {
+        if (allowError) return {error:{code}};
+        throw new SanitizedHerdrServerError(code);
+      }
+      throw new Error("herdr_protocol_error");
+    }
+    throw new Error("herdr_command_failed");
   }
 }

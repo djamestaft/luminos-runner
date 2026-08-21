@@ -17,11 +17,19 @@ test("refuses unknown project before adapters run", async () => {
   const result = await create().execute({ contractVersion: CONTRACT_VERSION, verb: "create_job", jobId: "job_87654321", project: "attacker", profile: "default", label:"bounded-task" });
   assert.equal(result.category, "refused");
 });
-for(const phase of ["herdr_workspace_create_failed","herdr_snapshot_lookup_failed","herdr_agent_start_failed"]){
-  test(`returns the bounded ${phase} diagnostic without leaking process details`,async()=>{
-    const failedHerdr:HerdrAdapter={...herdr,async create(){throw Object.assign(new Error(phase),{detail:"sensitive C:\\protected\\herdr --secret environment"});}};
-    const result=await new HostBroker(new Map([["lmns",policy]]),new MemoryJobRegistry(),git,failedHerdr).execute({contractVersion:CONTRACT_VERSION,verb:"create_job",jobId:"job_12345678",project:"lmns",profile:"default",label:"bounded-task"});
-    assert.equal(result.state,"unknown");assert.equal(result.category,"unknown");assert.equal(result.summary,phase);assert.notEqual(result.summary,"operation_failed");assert.doesNotMatch(JSON.stringify(result),/protected|command|argument|environment|sensitive|secret/i);
+const createDiagnostics=["herdr_workspace_create_failed","herdr_snapshot_lookup_failed","herdr_agent_start_failed","herdr_workspace_create_failed:workspace_create_failed","herdr_snapshot_lookup_failed:server_unavailable","herdr_agent_start_failed:agent_pane_unavailable"];
+for(const diagnostic of createDiagnostics){
+  test(`returns the bounded ${diagnostic} diagnostic without leaking process details`,async()=>{
+    const failedHerdr:HerdrAdapter={...herdr,async create(){throw Object.assign(new Error(diagnostic),{detail:"SECRET_DETAIL C:\\protected\\herdr --arguments environment credentials",stdout:"SECRET_STDOUT",stderr:"SECRET_STDERR"});}};
+    const result=await new HostBroker(new Map([["lmns",policy]]),new MemoryJobRegistry(),git,failedHerdr).execute({contractVersion:CONTRACT_VERSION,verb:"create_job",jobId:"job_12345678",project:"lmns",profile:"default",label:"secretinputsentinel"});
+    assert.equal(result.state,"unknown");assert.equal(result.category,"unknown");assert.equal(result.summary,diagnostic);assert.notEqual(result.summary,"operation_failed");assert.doesNotMatch(JSON.stringify(result),/SECRET_|secretinputsentinel|protected|arguments?|environment|credentials?|stdout|stderr/i);
+  });
+}
+for(const unsafe of ["herdr_agent_start_failed:unknown_safe_code","SECRET_RAW_MESSAGE C:\\protected\\herdr --arguments environment credentials"]){
+  test("reduces an unsafe create exception to operation_failed",async()=>{
+    const failedHerdr:HerdrAdapter={...herdr,async create(){throw new Error(unsafe);}};
+    const result=await new HostBroker(new Map([["lmns",policy]]),new MemoryJobRegistry(),git,failedHerdr).execute({contractVersion:CONTRACT_VERSION,verb:"create_job",jobId:"job_12345678",project:"lmns",profile:"default",label:"secretinputsentinel"});
+    assert.equal(result.state,"unknown");assert.equal(result.category,"unknown");assert.equal(result.summary,"operation_failed");assert.doesNotMatch(JSON.stringify(result),/SECRET_|secretinputsentinel|protected|arguments?|environment|credentials?/i);
   });
 }
 test("rejects pane injection at protocol boundary", async () => {
