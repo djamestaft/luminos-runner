@@ -1,5 +1,12 @@
 import type { HerdrAdapter } from "./broker.js";
-import { herdrCreateDiagnostic, normalizeHerdrServerErrorCode, SanitizedHerdrServerError, sanitizedHerdrServerCode, type HerdrCreatePhase } from "./herdrErrorDiagnostics.js";
+import {
+  herdrCreateDiagnostic,
+  normalizeHerdrServerErrorCode,
+  SanitizedHerdrError,
+  sanitizedHerdrCategory,
+  type HerdrCreatePhase,
+  type HerdrStructuralCategory,
+} from "./herdrErrorDiagnostics.js";
 import type { ProcessExecutor } from "./processExecutor.js";
 
 type HerdrStatus = "working" | "ready" | "unknown";
@@ -14,7 +21,8 @@ const agentStatus = (value: Record<string, unknown>): HerdrStatus => {
 const agentNameForJob = (jobId: string): string => `job-${jobId.replace(/^job_/, "").slice(0, 28)}`;
 const readableName = (label:string,jobId:string):string => { const suffix=jobId.replace(/^job_/,"").slice(0,8).toLowerCase();const slug=label.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,14).replace(/-$/g,"")||"task";return `discord-${slug}-${suffix}`; };
 const pause=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
-const createFailure = (phase: HerdrCreatePhase, error: unknown): Error => new Error(herdrCreateDiagnostic(phase, sanitizedHerdrServerCode(error)));
+const classified = (category: HerdrStructuralCategory): SanitizedHerdrError => new SanitizedHerdrError(category);
+const createFailure = (phase: HerdrCreatePhase, error: unknown): Error => new Error(herdrCreateDiagnostic(phase, sanitizedHerdrCategory(error)));
 export const herdrBinaryForPlatform=(_platform:NodeJS.Platform):string=>"herdr";
 
 export class HerdrCliAdapter implements HerdrAdapter {
@@ -26,16 +34,22 @@ export class HerdrCliAdapter implements HerdrAdapter {
       const workspaceArgs = ["workspace", "create", "--cwd", input.cwd, "--label", agentName];
       if (this.shellZdotdir) workspaceArgs.push("--env", `ZDOTDIR=${this.shellZdotdir}`);
       workspaceArgs.push("--no-focus");
-      const workspace = object(result(await this.call(workspaceArgs)).workspace);
-      if (typeof workspace?.workspace_id !== "string") throw new Error("invalid_workspace");
+      const envelope = await this.call(workspaceArgs);
+      if ("result" in envelope && !object(envelope.result)) throw classified("success_invalid_json");
+      const response = result(envelope);
+      const workspace = object(response.workspace);
+      if (!workspace || typeof workspace.workspace_id !== "string") throw classified("success_missing_workspace");
       workspaceId=workspace.workspace_id;
     } catch (error) { throw createFailure("herdr_workspace_create_failed", error); }
     let paneId:string;
     try {
-      const snapshot = result(await this.call(["api", "snapshot"]));
-      const snap = object(snapshot.snapshot); const panes = Array.isArray(snap?.panes) ? snap.panes : [];
-      const pane = panes.map(object).find((candidate) => candidate?.workspace_id === workspaceId);
-      if (typeof pane?.pane_id !== "string") throw new Error("invalid_pane");
+      const envelope = await this.call(["api", "snapshot"]);
+      if ("result" in envelope && !object(envelope.result)) throw classified("success_invalid_json");
+      const response = result(envelope);
+      const snapshot = object(response.snapshot);
+      if (!snapshot || !Array.isArray(snapshot.panes) || snapshot.panes.some(pane => object(pane) === undefined)) throw classified("success_invalid_json");
+      const pane = snapshot.panes.map(object).find((candidate) => candidate?.workspace_id === workspaceId);
+      if (typeof pane?.pane_id !== "string") throw classified("success_missing_workspace");
       paneId=pane.pane_id;
     } catch (error) { throw createFailure("herdr_snapshot_lookup_failed", error); }
     try {
@@ -85,16 +99,10 @@ export class HerdrCliAdapter implements HerdrAdapter {
   private async call(args: readonly string[], timeout?: number, allowError = false): Promise<Record<string, unknown>> {
     let output;
     try { output = await this.executor.run(this.binary, args, timeout); }
-    catch(error) {
-      const code = typeof error === "object" && error !== null && "code" in error ? String(error.code).toUpperCase() : "";
-      if (code === "ENOENT") throw new Error("herdr_process_start_failed_enoent");
-      if (error instanceof Error && error.message === "process_timeout") throw error;
-      if (error instanceof Error && error.message === "process_output_too_large") throw error;
-      throw new Error("herdr_process_start_failed");
-    }
+    catch { throw classified("exit_other"); }
     if (output.exitCode === 0) {
       const parsed = jsonObject(output.stdout);
-      if (!parsed) throw new Error("herdr_protocol_error");
+      if (!parsed) throw classified("success_invalid_json");
       return parsed;
     }
     if (output.exitCode === 1) {
@@ -103,10 +111,11 @@ export class HerdrCliAdapter implements HerdrAdapter {
       const code = typeof error?.message === "string" ? normalizeHerdrServerErrorCode(error.code) : undefined;
       if (code) {
         if (allowError) return {error:{code}};
-        throw new SanitizedHerdrServerError(code);
+        throw new SanitizedHerdrError(code);
       }
-      throw new Error("herdr_protocol_error");
+      throw classified("exit_1_unstructured");
     }
-    throw new Error("herdr_command_failed");
+    if (output.exitCode === 2) throw classified("exit_2_syntax");
+    throw classified("exit_other");
   }
 }

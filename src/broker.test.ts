@@ -17,7 +17,9 @@ test("refuses unknown project before adapters run", async () => {
   const result = await create().execute({ contractVersion: CONTRACT_VERSION, verb: "create_job", jobId: "job_87654321", project: "attacker", profile: "default", label:"bounded-task" });
   assert.equal(result.category, "refused");
 });
-const createDiagnostics=["herdr_workspace_create_failed","herdr_snapshot_lookup_failed","herdr_agent_start_failed","herdr_workspace_create_failed:workspace_create_failed","herdr_snapshot_lookup_failed:server_unavailable","herdr_agent_start_failed:agent_pane_unavailable"];
+const phases=["herdr_workspace_create_failed","herdr_snapshot_lookup_failed","herdr_agent_start_failed"];
+const categories=["exit_1_unstructured","exit_2_syntax","exit_other","success_invalid_json","success_missing_workspace","future_safe_code"];
+const createDiagnostics=phases.flatMap(phase=>categories.map(category=>`${phase}:${category}`));
 for(const diagnostic of createDiagnostics){
   test(`returns the bounded ${diagnostic} diagnostic without leaking process details`,async()=>{
     const failedHerdr:HerdrAdapter={...herdr,async create(){throw Object.assign(new Error(diagnostic),{detail:"SECRET_DETAIL C:\\protected\\herdr --arguments environment credentials",stdout:"SECRET_STDOUT",stderr:"SECRET_STDERR"});}};
@@ -25,7 +27,15 @@ for(const diagnostic of createDiagnostics){
     assert.equal(result.state,"unknown");assert.equal(result.category,"unknown");assert.equal(result.summary,diagnostic);assert.notEqual(result.summary,"operation_failed");assert.doesNotMatch(JSON.stringify(result),/SECRET_|secretinputsentinel|protected|arguments?|environment|credentials?|stdout|stderr/i);
   });
 }
-for(const unsafe of ["herdr_agent_start_failed:unknown_safe_code","SECRET_RAW_MESSAGE C:\\protected\\herdr --arguments environment credentials"]){
+for(const unsafe of [
+  ...phases,
+  "herdr_agent_start_failed:future_safe_code:extra",
+  "herdr_agent_start_failed:UPPER_CODE",
+  "herdr_agent_start_failed:code/path",
+  `herdr_agent_start_failed:a${"7".repeat(32)}`,
+  "herdr_unknown_phase:future_safe_code",
+  "SECRET_RAW_MESSAGE C:\\protected\\herdr --arguments environment credentials",
+]){
   test("reduces an unsafe create exception to operation_failed",async()=>{
     const failedHerdr:HerdrAdapter={...herdr,async create(){throw new Error(unsafe);}};
     const result=await new HostBroker(new Map([["lmns",policy]]),new MemoryJobRegistry(),git,failedHerdr).execute({contractVersion:CONTRACT_VERSION,verb:"create_job",jobId:"job_12345678",project:"lmns",profile:"default",label:"secretinputsentinel"});

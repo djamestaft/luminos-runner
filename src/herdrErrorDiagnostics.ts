@@ -4,63 +4,50 @@ export const HERDR_CREATE_PHASES = [
   "herdr_agent_start_failed",
 ] as const;
 
-export type HerdrCreatePhase = typeof HERDR_CREATE_PHASES[number];
-
-export const HERDR_SERVER_ERROR_CODES = [
-  "workspace_create_failed",
-  "workspace_not_found",
-  "pane_not_found",
-  "server_unavailable",
-  "server_not_running",
-  "protocol_mismatch",
-  "internal_error",
-  "invalid_request",
-  "timeout",
-  "invalid_agent_name",
-  "unsupported_agent_kind",
-  "invalid_agent_argument",
-  "invalid_agent_timeout",
-  "agent_pane_not_found",
-  "agent_pane_busy",
-  "agent_pane_unavailable",
-  "agent_start_input_failed",
-  "agent_name_taken",
-  "agent_launch_pending",
-  "agent_start_failed",
-  "agent_start_transport_failed",
-  "agent_not_found",
+export const HERDR_STRUCTURAL_CATEGORIES = [
+  "exit_1_unstructured",
+  "exit_2_syntax",
+  "exit_other",
+  "success_invalid_json",
+  "success_missing_workspace",
 ] as const;
 
-export type HerdrServerErrorCode = typeof HERDR_SERVER_ERROR_CODES[number];
-export type HerdrCreateDiagnostic = HerdrCreatePhase | `${HerdrCreatePhase}:${HerdrServerErrorCode}`;
+export const HERDR_SERVER_ERROR_CODE_MAX_LENGTH = 32;
+
+export type HerdrCreatePhase = typeof HERDR_CREATE_PHASES[number];
+export type HerdrStructuralCategory = typeof HERDR_STRUCTURAL_CATEGORIES[number];
+export type HerdrServerErrorCode = string & { readonly __herdrServerErrorCode: unique symbol };
+export type HerdrCreateCategory = HerdrStructuralCategory | HerdrServerErrorCode;
+export type HerdrCreateDiagnostic = `${HerdrCreatePhase}:${HerdrCreateCategory}`;
 
 const phases = new Set<string>(HERDR_CREATE_PHASES);
-const codes = new Set<string>(HERDR_SERVER_ERROR_CODES);
+const structuralCategories = new Set<string>(HERDR_STRUCTURAL_CATEGORIES);
+const safeCodePattern = /^[a-z][a-z0-9_]{0,31}$/;
 
 export const normalizeHerdrServerErrorCode = (value: unknown): HerdrServerErrorCode | undefined => {
   if (typeof value !== "string") return undefined;
   const normalized = value.trim().toLowerCase();
-  if (!/^[a-z0-9_]+$/.test(normalized) || !codes.has(normalized)) return undefined;
-  return normalized as HerdrServerErrorCode;
+  return safeCodePattern.test(normalized) ? normalized as HerdrServerErrorCode : undefined;
 };
 
-export const herdrCreateDiagnostic = (phase: HerdrCreatePhase, code?: HerdrServerErrorCode): HerdrCreateDiagnostic =>
-  code === undefined ? phase : `${phase}:${code}`;
+const isHerdrCreateCategory = (value: string): value is HerdrCreateCategory =>
+  structuralCategories.has(value) || normalizeHerdrServerErrorCode(value) === value;
+
+export const herdrCreateDiagnostic = (phase: HerdrCreatePhase, category: HerdrCreateCategory): HerdrCreateDiagnostic =>
+  `${phase}:${category}`;
 
 export const isHerdrCreateDiagnostic = (value: unknown): value is HerdrCreateDiagnostic => {
   if (typeof value !== "string") return false;
-  const separator = value.indexOf(":");
-  if (separator === -1) return phases.has(value);
-  if (value.indexOf(":", separator + 1) !== -1) return false;
-  return phases.has(value.slice(0, separator)) && codes.has(value.slice(separator + 1));
+  const parts = value.split(":");
+  return parts.length === 2 && phases.has(parts[0] ?? "") && isHerdrCreateCategory(parts[1] ?? "");
 };
 
-export class SanitizedHerdrServerError extends Error {
-  public constructor(public readonly serverCode: HerdrServerErrorCode) {
+export class SanitizedHerdrError extends Error {
+  public constructor(public readonly category: HerdrCreateCategory) {
     super("herdr_command_failed");
-    this.name = "SanitizedHerdrServerError";
+    this.name = "SanitizedHerdrError";
   }
 }
 
-export const sanitizedHerdrServerCode = (error: unknown): HerdrServerErrorCode | undefined =>
-  error instanceof SanitizedHerdrServerError ? error.serverCode : undefined;
+export const sanitizedHerdrCategory = (error: unknown): HerdrCreateCategory =>
+  error instanceof SanitizedHerdrError ? error.category : "exit_other";
