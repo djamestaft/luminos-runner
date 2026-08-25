@@ -111,6 +111,22 @@ icacls "$PilotRoot\github-token" /inheritance:r /grant:r `
 
 Do not print the token, complete broker environment, or raw Herdr values.
 
+Every job worktree must be freshly created and clean from that verified,
+protected LMNS origin and base. This is also the security precondition for
+unattended Codex startup: the runner passes both
+`--dangerously-bypass-approvals-and-sandbox` and
+`--dangerously-bypass-hook-trust` through Herdr. The latter suppresses only the
+Codex hook/workspace trust confirmation for the invocation; it must never be
+used for an arbitrary or active personal checkout. It does not bypass Codex
+authentication or login failures.
+
+Before sending task text, the runner requires two bounded live-agent and pane
+process checks separated by a short stability interval. On Windows, Herdr may
+legitimately keep Codex behind a `cmd.exe` wrapper, but a pane whose foreground
+process has returned to PowerShell is rejected even when PowerShell's argv or
+command line still mentions Codex. This check fails closed before constructing
+or sending the task prompt.
+
 ## Start the foreground broker
 
 In Greg's Herdr-managed normal-account pane, use direct argv execution and keep
@@ -132,6 +148,14 @@ $Ready = "$PilotRoot\pilot-ready"
 
 Success is a `pilot_ready` event and newly created, protected descriptor and
 ready files. Do not print their contents. Leave this pane and process running.
+
+The pipe uses separate bounded phases. Receiving and framing exactly one JSON
+request has a 30-second timeout. After parsing, only an authoritative valid
+`prompt_job` receives the command's `timeoutMs` plus 10 seconds of transport
+grace, bounded between 30 seconds and the contract maximum plus that grace.
+Invalid requests and every non-prompt command remain limited to 30 seconds.
+The server resets the socket timer before broker execution; no phase is
+unbounded.
 
 ## OpenSSH forced proxy
 
@@ -216,11 +240,26 @@ Until that passes, do not run `create_job`, `prompt_job`, `recover_job`,
 `handoff_job`, `close_job`, or a Discord task. After it passes, activate only
 one fresh Discord pilot task and never reuse a preserved job ID.
 
+If Discord reports `dispatcher_unknown` while Codex later finishes or commits,
+the dispatcher probably lost the pipe response. Do not repeat the mutation or
+reuse the job ID. Preserve the worktree, inspect only bounded sanitized broker
+and Herdr status, and use the broker's recovery lifecycle. A missing/stale
+descriptor, missing ready file, or stopped foreground process instead requires
+a clean pilot restart and a new read-only gate before any further task.
+
 ## Stop and rollback
 
 Press Ctrl+C in the foreground broker pane. The broker closes the pipe and
 removes the descriptor and ready files it created. Verify no broker process
 remains before removing any session-specific pilot directory.
+
+For a safe upgrade or restart, stop the foreground broker first and confirm its
+descriptor and ready files disappear. Rebuild the intended revision, create a
+fresh correlation and protected pilot root, then relaunch with fresh pipe,
+descriptor, and ready paths. If the descriptor path changes, back up
+`sshd_config`, change only the forced-command descriptor argument, validate the
+complete file with `sshd.exe -t`, and restart only `sshd`. Require a fresh
+read-only `job_status` refusal before reopening the Discord activation gate.
 
 To roll back SSH configuration from elevated PowerShell, use the exact backup
 created immediately before activation:

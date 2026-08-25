@@ -24,6 +24,7 @@ const pause=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
 const classified = (category: HerdrStructuralCategory): SanitizedHerdrError => new SanitizedHerdrError(category);
 const createFailure = (phase: HerdrCreatePhase, error: unknown): Error => new Error(herdrCreateDiagnostic(phase, sanitizedHerdrCategory(error)));
 const processMentionsAgent=(value:Record<string,unknown>,kind:"codex"|"pi"):boolean=>{
+  if(typeof value.name==="string"&&/^(?:powershell|pwsh)(?:\.exe)?$/i.test(value.name))return false;
   const fields=[value.name,value.argv0,value.cmdline,...(Array.isArray(value.argv)?value.argv:[])];
   const pattern=kind==="codex"?/(?:^|[^a-z0-9])codex(?:-cli)?(?:\.cmd|\.exe)?(?:$|[^a-z0-9])/i:/(?:^|[^a-z0-9])pi(?:\.cmd|\.exe)?(?:$|[^a-z0-9])/i;
   return fields.some(field=>typeof field==="string"&&pattern.test(field));
@@ -59,13 +60,15 @@ export class HerdrCliAdapter implements HerdrAdapter {
     } catch (error) { throw createFailure("herdr_snapshot_lookup_failed", error); }
     try {
       const startArgs = ["agent", "start", agentName, "--kind", this.agentKind, "--pane", paneId, "--timeout", "300000"];
-      if (this.agentKind === "codex") startArgs.push("--", "--dangerously-bypass-approvals-and-sandbox");
+      if (this.agentKind === "codex") startArgs.push("--", "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust");
       await this.startAgent(agentName,startArgs);
       await this.assertAgentLive(agentName);
     } catch (error) { throw createFailure("herdr_agent_start_failed", error); }
     return { sessionId: agentName, workspaceId };
   }
   public async prompt(sessionId: string, text: string, timeoutMs: number): Promise<HerdrStatus> {
+    await this.assertAgentLive(sessionId);
+    await pause(500);
     await this.assertAgentLive(sessionId);
     const controlledTask = `${text}\n\nRunner handoff requirement: leave the requested changes committed on the current job branch before finishing. Do not include unrelated changes in that commit.`;
     // Herdr's default --wait contract settles only when the agent is idle,

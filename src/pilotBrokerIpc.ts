@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import type { BrokerCommand } from "@djamestaft/hermes-herdr-contracts";
 import { MAX_TIMEOUT_MS, parseBrokerCommand } from "@djamestaft/hermes-herdr-contracts";
 
 export const PILOT_PROTOCOL_VERSION = 1;
@@ -47,12 +48,17 @@ export const parseSingleJson = (data: Buffer, maximum: number): unknown => {
   try { return JSON.parse(text); } catch { throw new Error("invalid_message"); }
 };
 
+export const pilotCommandTimeoutMs = (command: BrokerCommand): number => {
+  if (command.verb === "prompt_job") {
+    return Math.min(PILOT_MAX_IO_TIMEOUT_MS, Math.max(PILOT_IO_TIMEOUT_MS, command.timeoutMs + PILOT_IO_TIMEOUT_GRACE_MS));
+  }
+  return PILOT_IO_TIMEOUT_MS;
+};
+
 export const pilotRequestTimeoutMs = (request: Buffer): number => {
   try {
     const command = parseBrokerCommand(parseSingleJson(request, MAX_PILOT_REQUEST_BYTES));
-    if (command.verb === "prompt_job") {
-      return Math.min(PILOT_MAX_IO_TIMEOUT_MS, Math.max(PILOT_IO_TIMEOUT_MS, command.timeoutMs + PILOT_IO_TIMEOUT_GRACE_MS));
-    }
+    return pilotCommandTimeoutMs(command);
   } catch {
     // Malformed requests still reach the broker for its authoritative refusal,
     // but never obtain a longer transport window from untrusted fields.
