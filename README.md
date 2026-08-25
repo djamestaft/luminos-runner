@@ -39,6 +39,11 @@ The guide covers Tailscale plus Windows OpenSSH, the constrained broker user,
 ACLs, immutable installation, forced-command validation, the read-only Herdr
 launch-context A/B, and the explicit activation/rollback gates.
 
+For Greg's temporary normal-account foreground pilot, follow
+[`docs/windows-greg-pilot-setup.md`](docs/windows-greg-pilot-setup.md). It uses
+a protected named pipe and OpenSSH forced proxy without creating a broker
+account, Windows service, scheduled task, or immutable Program Files release.
+
 ## Validation
 
 ```sh
