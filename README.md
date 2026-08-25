@@ -33,6 +33,12 @@ node dist/hostBrokerMain.js --config /path/to/protected/broker.env
 
 On Windows, first run `service/windows/test-runner.ps1` from elevated PowerShell. `install-runner.ps1` is validation-only unless `-Apply` is supplied; it then copies a versioned release below `C:\Program Files\Luminos\releases` and makes it read-only to the broker account. OpenSSH invokes one forced-command request at a time—there is no persistent scheduled broker task. The dedicated non-administrator account, authorized key, tailnet policy, and VPS `GREG_SSH_TARGET` remain separate explicit gates.
 
+For a validation machine that must remain separate from Greg's route, follow
+[`docs/windows-validation-runner-setup.md`](docs/windows-validation-runner-setup.md).
+The guide covers Tailscale plus Windows OpenSSH, the constrained broker user,
+ACLs, immutable installation, forced-command validation, the read-only Herdr
+launch-context A/B, and the explicit activation/rollback gates.
+
 ## Validation
 
 ```sh
