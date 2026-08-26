@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import os from "node:os";
+import path from "node:path";
 import type { ProjectPolicy } from "./broker.js";
 import { redactText } from "./redaction.js";
 
@@ -31,8 +32,8 @@ export const parseRepositoryQuery = (raw:unknown):RepositoryQueryRequest => {
   return {version:1,queryId:value.queryId,projects:value.projects as string[],question:value.question.trim()};
 };
 
-const promptFor = (request:RepositoryQueryRequest,evidence:RepositoryEvidence[],policies:ProjectPolicy[]):string => {
-  const repositories=evidence.map((item,index)=>`${index+1}. ${item.project} (${item.repository}) at revision ${item.revision}; local root: ${policies[index].repoRoot}`).join("\n");
+const promptFor = (request:RepositoryQueryRequest,evidence:RepositoryEvidence[],worktrees:string[]):string => {
+  const repositories=evidence.map((item,index)=>`${index+1}. ${item.project} (${item.repository}) at revision ${item.revision}; local root: ${worktrees[index]}`).join("\n");
   return `You are a read-only repository analyst. Answer the question using only the repositories listed below. Do not modify files, run network commands, use credentials, create branches, commit, push, or open pull requests. You may run local read-only inspection commands. Distinguish repository evidence from inference and recommendations. Cite supporting repository-relative file paths and line numbers. If evidence is absent or ambiguous, say so.\n\nRepositories:\n${repositories}\n\nQuestion:\n${request.question}`;
 };
 
@@ -74,17 +75,18 @@ export class RepositoryQueryService {
       if(os.userInfo().username.toLowerCase()!==this.config.expectedUsername.toLowerCase())return{version:1,queryId:request.queryId,state:"refused",category:"reader_identity_mismatch"};
       const policies=request.projects.map(project=>this.policies.get(project));
       if(policies.some(policy=>!policy||!policy.profiles.includes("read")))return{version:1,queryId:request.queryId,state:"refused",category:"project_not_readable"};
-      const selected=policies as ProjectPolicy[];const repositories:RepositoryEvidence[]=[];
-      for(const policy of selected){
-        const remote=await this.git(policy,["remote","get-url",policy.remote]);if(remote!==policy.expectedRemoteUrl)throw new Error("repository_mismatch");
-        if(await this.git(policy,["status","--porcelain=v1","--untracked-files=all","--ignored=matching"]))throw new Error("repository_not_clean");
-        const revision=await this.git(policy,["rev-parse","--verify","HEAD^{commit}"]);if(!/^[a-f0-9]{40}$/.test(revision))throw new Error("repository_invalid_revision");
-        repositories.push({project:policy.project,repository:policy.githubRepo,revision});
-      }
-      const result=await this.process.run(this.config.nodeExecutable??process.execPath,[this.config.codexJs,"exec","--sandbox","read-only","--ephemeral","--dangerously-bypass-hook-trust","--json","-C",selected[0].repoRoot,"-"],promptFor(request,repositories,selected),{cwd:selected[0].repoRoot,timeoutMs:this.config.timeoutMs,environment:codexEnvironment()});
-      if(result.exitCode!==0)throw new Error("query_process_failed");
-      return{version:1,queryId:request.queryId,state:"completed",answer:redactText(finalAgentMessage(result.stdout),MAX_ANSWER),repositories};
-    }catch(error){const category=error instanceof Error&&/^(?:repository_(?:mismatch|not_clean|invalid_revision)|query_(?:process_failed|protocol_failed|timeout|output_too_large))$/.test(error.message)?error.message:"query_failed";return{version:1,queryId:request.queryId,state:"failed",category};}
+      const selected=policies as ProjectPolicy[];const repositories:RepositoryEvidence[]=[];const worktrees:{policy:ProjectPolicy;cwd:string}[]=[];
+      try{
+        for(const policy of selected){
+          const remote=await this.git(policy,["remote","get-url",policy.remote],"repository_invalid_revision");if(remote!==policy.expectedRemoteUrl)throw new Error("repository_mismatch");
+          const revision=await this.git(policy,["rev-parse","--verify",`${policy.baseRef}^{commit}`],"repository_invalid_revision");if(!/^[a-f0-9]{40}$/.test(revision))throw new Error("repository_invalid_revision");
+          const cwd=path.join(policy.worktreeRoot,"queries",request.queryId,policy.project);await this.git(policy,["worktree","add","--detach",cwd,revision],"query_workspace_failed");worktrees.push({policy,cwd});repositories.push({project:policy.project,repository:policy.githubRepo,revision});
+        }
+        const roots=worktrees.map(item=>item.cwd);const result=await this.process.run(this.config.nodeExecutable??process.execPath,[this.config.codexJs,"exec","--sandbox","read-only","--ephemeral","--dangerously-bypass-hook-trust","--json","-C",roots[0],"-"],promptFor(request,repositories,roots),{cwd:roots[0],timeoutMs:this.config.timeoutMs,environment:codexEnvironment()});
+        if(result.exitCode!==0)throw new Error("query_process_failed");
+        return{version:1,queryId:request.queryId,state:"completed",answer:redactText(finalAgentMessage(result.stdout),MAX_ANSWER),repositories};
+      }finally{let cleanupFailed=false;for(const item of worktrees.reverse()){try{await this.git(item.policy,["worktree","remove",item.cwd],"query_cleanup_failed");}catch{cleanupFailed=true;}}if(cleanupFailed)throw new Error("query_cleanup_failed");}
+    }catch(error){const category=error instanceof Error&&/^(?:repository_(?:mismatch|invalid_revision)|query_(?:workspace_failed|cleanup_failed|process_failed|protocol_failed|timeout|output_too_large))$/.test(error.message)?error.message:"query_failed";return{version:1,queryId:request.queryId,state:"failed",category};}
   }
-  private async git(policy:ProjectPolicy,args:string[]):Promise<string>{const result=await this.process.run("git",["-C",policy.repoRoot,...args],undefined,{timeoutMs:30_000});if(result.exitCode!==0)throw new Error("repository_invalid_revision");return result.stdout.trim();}
+  private async git(policy:ProjectPolicy,args:string[],category:string):Promise<string>{const result=await this.process.run("git",["-C",policy.repoRoot,...args],undefined,{timeoutMs:30_000});if(result.exitCode!==0)throw new Error(category);return result.stdout.trim();}
 }

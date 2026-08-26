@@ -49,17 +49,18 @@ rejected as ambiguous.
 `queryCommandMain.js` is a separate, one-request consultation endpoint. It
 accepts an opaque query id, one or two logical project keys, and a bounded
 question. It refuses unknown projects and mappings without the `read` profile,
-verifies each clone's exact remote, requires a completely clean checkout, and
-records the exact HEAD revisions in its response. It invokes Codex with
+verifies each clone's exact remote, resolves the protected base revision, and
+creates a fresh detached worktree for that exact revision. It records the
+revision in its response and removes the worktree after execution. It invokes Codex with
 `exec --sandbox read-only --ephemeral --dangerously-bypass-hook-trust --json`
-and a minimal environment; it has no worktree, commit, push, PR, Herdr, broker
-registry, or GitHub-token path.
+and a minimal environment; it creates no branch, commit, push, PR, Herdr agent,
+broker registry entry, or GitHub-token path.
 
 Codex's filesystem read-only policy prevents writes but is not a per-directory
 confidentiality boundary. `QUERY_EXPECTED_USERNAME` therefore binds the route
 to the intended personal runner account, but the process retains that account's
-normal file-read permissions. Use only clean dedicated LMNS and Reghub clones,
-not an active working checkout. The query child receives a minimal environment
+normal file-read permissions. The fresh detached worktree prevents consultation
+from using an active working checkout. The query child receives a minimal environment
 and no broker GitHub token, but this is not OS-level repository confinement.
 
 Example protected query config:
