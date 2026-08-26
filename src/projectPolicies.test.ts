@@ -55,5 +55,5 @@ test("selects either the protected registry or the legacy single-project mapping
   assert.equal((await loadProjectPoliciesFromEnvironment({ BROKER_PROJECTS_FILE: file })).size, 2);
   await assert.rejects(loadProjectPoliciesFromEnvironment({ BROKER_PROJECTS_FILE: file, BROKER_PROJECT_KEY: "lmns" }), /Ambiguous/);
   const legacy = await loadProjectPoliciesFromEnvironment({ BROKER_PROJECT_KEY: "lmns", BROKER_REPO_ROOT: "/repo", BROKER_WORKTREE_ROOT: "/jobs", BROKER_EXPECTED_REMOTE_URL: "git@github.com:djamestaft/lmns.git", BROKER_GITHUB_REPO: "djamestaft/lmns" });
-  assert.equal(legacy.get("lmns")?.repoRoot, path.normalize("/repo"));
+  assert.equal(legacy.get("lmns")?.repoRoot, "/repo");
 });
