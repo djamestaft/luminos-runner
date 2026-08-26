@@ -16,7 +16,7 @@ const registry = () => ({
 test("parses multiple exact protected project and profile mappings", () => {
   const policies = parseProjectPolicies(registry());
   assert.equal(policies.size, 2);
-  assert.deepEqual(policies.get("lmns"), { project: "lmns", repoRoot: "/protected/lmns", worktreeRoot: "/protected/worktrees/lmns", remote: "origin", expectedRemoteUrl: "git@github.com:djamestaft/lmns.git", baseRef: "origin/main", baseBranch: "main", githubRepo: "djamestaft/lmns", profiles: ["default"] });
+  assert.deepEqual(policies.get("lmns"), { project: "lmns", repoRoot: path.normalize("/protected/lmns"), worktreeRoot: path.normalize("/protected/worktrees/lmns"), remote: "origin", expectedRemoteUrl: "git@github.com:djamestaft/lmns.git", baseRef: "origin/main", baseBranch: "main", githubRepo: "djamestaft/lmns", profiles: ["default"] });
   assert.equal(policies.get("reghub")?.baseRef, "upstream/develop");
   assert.deepEqual(policies.get("reghub")?.profiles, ["read", "controlled_test"]);
 });
@@ -55,5 +55,5 @@ test("selects either the protected registry or the legacy single-project mapping
   assert.equal((await loadProjectPoliciesFromEnvironment({ BROKER_PROJECTS_FILE: file })).size, 2);
   await assert.rejects(loadProjectPoliciesFromEnvironment({ BROKER_PROJECTS_FILE: file, BROKER_PROJECT_KEY: "lmns" }), /Ambiguous/);
   const legacy = await loadProjectPoliciesFromEnvironment({ BROKER_PROJECT_KEY: "lmns", BROKER_REPO_ROOT: "/repo", BROKER_WORKTREE_ROOT: "/jobs", BROKER_EXPECTED_REMOTE_URL: "git@github.com:djamestaft/lmns.git", BROKER_GITHUB_REPO: "djamestaft/lmns" });
-  assert.equal(legacy.get("lmns")?.repoRoot, "/repo");
+  assert.equal(legacy.get("lmns")?.repoRoot, path.normalize("/repo"));
 });
