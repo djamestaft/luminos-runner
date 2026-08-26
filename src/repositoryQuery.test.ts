@@ -9,7 +9,7 @@ class FakeProcess implements QueryProcess {
   public calls:{file:string;args:readonly string[];input:string|undefined;cwd?:string;environment?:NodeJS.ProcessEnv}[]=[];
   public async run(file:string,args:readonly string[],input:string|undefined,options:{cwd?:string;environment?:NodeJS.ProcessEnv}):Promise<QueryProcessResult>{
     this.calls.push({file,args,input,cwd:options.cwd,environment:options.environment});
-    return{exitCode:0,stdout:JSON.stringify({type:"item.completed",item:{id:"1",type:"agent_message",text:"Evidence from `src/example.ts:12`."}})+"\n"};
+    return{exitCode:0,stdout:"Evidence from `src/example.ts:12`.\n"};
   }
 }
 
@@ -24,7 +24,7 @@ test("query invokes read-only Codex directly in fixed local sources without Git"
   const service=new RepositoryQueryService(sources,process,{expectedUsername:os.userInfo().username,codexJs:"C:\\tools\\codex.js",timeoutMs:60_000,nodeExecutable:"node"});
   const result=await service.execute({version:1,queryId:`query_${"b".repeat(32)}`,projects:["lmns","reghub"],question:"Compare the workflow."});
   assert.equal(result.state,"completed");if(result.state!=="completed")return;assert.equal(result.sources.length,2);assert.equal(result.sources[0].source,"Greg local lmns working copy");assert.ok(Number.isFinite(Date.parse(result.sources[0].observedAt)));assert.match(result.answer,/src\/example\.ts:12/);
-  assert.equal(process.calls.length,1);const codex=process.calls[0];assert.equal(codex.file,"node");assert.deepEqual(codex.args.slice(1),["exec","--sandbox","read-only","--ephemeral","--dangerously-bypass-hook-trust","--json","-C","C:\\reader\\lmns","-"]);assert.equal(codex.cwd,"C:\\reader\\lmns");assert.ok(codex.input!.includes("C:\\reader\\reghub"));assert.match(codex.input!,/Do not modify files, run Git or network commands/);assert.equal(codex.environment?.GITHUB_TOKEN,undefined);assert.equal(codex.environment?.AZURE_CLIENT_SECRET,undefined);assert.notEqual(codex.file.toLowerCase(),"git");
+  assert.equal(process.calls.length,1);const codex=process.calls[0];assert.equal(codex.file,"node");assert.deepEqual(codex.args.slice(1),["exec","--sandbox","read-only","--ephemeral","--dangerously-bypass-hook-trust","-C","C:\\reader\\lmns","-"]);assert.equal(codex.cwd,"C:\\reader\\lmns");assert.ok(codex.input!.includes("C:\\reader\\reghub"));assert.match(codex.input!,/Do not modify files, run Git or network commands/);assert.equal(codex.environment?.GITHUB_TOKEN,undefined);assert.equal(codex.environment?.AZURE_CLIENT_SECRET,undefined);assert.notEqual(codex.file.toLowerCase(),"git");
 });
 
 test("query refuses an unknown source before process execution",async()=>{
@@ -37,13 +37,13 @@ test("query reports a bounded failure when Codex exits unsuccessfully",async()=>
   const process=new FailedCodex();const service=new RepositoryQueryService(new Map([["lmns",source("lmns","C:\\reader\\lmns")]]),process,{expectedUsername:os.userInfo().username,codexJs:"C:\\tools\\codex.js",timeoutMs:60_000,nodeExecutable:"node"});const result=await service.execute({version:1,queryId:`query_${"d".repeat(32)}`,projects:["lmns"],question:"Question"});assert.equal(result.state,"failed");assert.equal(result.category,"query_process_failed");assert.equal(process.calls.length,1);
 });
 
-test("query process discards large non-answer JSONL events and retains only the final answer",async()=>{
-  const script=`for(let i=0;i<400;i++)console.log(JSON.stringify({type:"item.completed",item:{type:"command_execution",aggregated_output:"x".repeat(1000)}}));console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:"See src/policy.ts:12."}}));`;
-  const result=await new SpawnQueryProcess(1_000_000).run(process.execPath,["-e",script],undefined,{timeoutMs:10_000});
-  assert.equal(result.exitCode,0);assert.match(result.stdout,/src\/policy\.ts:12/);assert.doesNotMatch(result.stdout,/"x{100}/);assert.ok(Buffer.byteLength(result.stdout)<500);
+test("query process discards large progress output and retains bounded final stdout",async()=>{
+  const script=`process.stderr.write("x".repeat(400000));process.stdout.write("See src/policy.ts:12.\\n");`;
+  const result=await new SpawnQueryProcess(1024,1_000_000).run(process.execPath,["-e",script],undefined,{timeoutMs:10_000});
+  assert.equal(result.exitCode,0);assert.equal(result.stdout,"See src/policy.ts:12.\n");
 });
 
 test("query process retains a hard total stream ceiling",async()=>{
-  const script=`console.log(JSON.stringify({type:"item.completed",item:{type:"command_execution",aggregated_output:"x".repeat(2000)}}));`;
+  const script=`process.stdout.write("x".repeat(2000));`;
   await assert.rejects(()=>new SpawnQueryProcess(1024).run(process.execPath,["-e",script],undefined,{timeoutMs:10_000}),/query_output_too_large/);
 });

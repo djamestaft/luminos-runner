@@ -42,27 +42,19 @@ const codexEnvironment = ():NodeJS.ProcessEnv => {
 };
 
 const finalAgentMessage = (output:string):string => {
-  let answer="";
-  for(const line of output.split(/\r?\n/)){
-    if(!line.trim())continue;
-    let event:unknown;try{event=JSON.parse(line);}catch{throw new Error("query_protocol_failed");}
-    const root=exactObject(event,["type","thread_id","turn","item","usage","error"]);
-    const item=root&&exactObject(root.item,["id","type","text","command","aggregated_output","exit_code","status","changes"]);
-    if(root?.type==="item.completed"&&item?.type==="agent_message"&&typeof item.text==="string")answer=item.text;
-  }
+  const answer=output.trim();
   if(!answer||answer.length>MAX_ANSWER)throw new Error("query_protocol_failed");
   return answer;
 };
 
 export class SpawnQueryProcess implements QueryProcess {
-  public constructor(private readonly maxOutputBytes=16_777_216,private readonly maxLineBytes=1_048_576){}
+  public constructor(private readonly maxAnswerBytes=65_536,private readonly maxProgressBytes=33_554_432){}
   public run(file:string,args:readonly string[],input:string|undefined,options:{cwd?:string;timeoutMs:number;environment?:NodeJS.ProcessEnv}):Promise<QueryProcessResult>{
-    return new Promise((resolve,reject)=>{let size=0,settled=false,timedOut=false,pending=Buffer.alloc(0);const answers:string[]=[];const child=spawn(file,[...args],{cwd:options.cwd,env:options.environment??process.env,shell:false,stdio:[input===undefined?"ignore":"pipe","pipe","pipe"]});
+    return new Promise((resolve,reject)=>{let answerSize=0,progressSize=0,settled=false,timedOut=false;const answers:Buffer[]=[];const child=spawn(file,[...args],{cwd:options.cwd,env:options.environment??process.env,shell:false,stdio:[input===undefined?"ignore":"pipe","pipe","pipe"]});
       const fail=(error:Error)=>{if(settled)return;settled=true;child.kill("SIGKILL");reject(error);};
-      const inspect=(line:Buffer)=>{if(line.length>this.maxLineBytes)return fail(new Error("query_output_too_large"));if(!line.toString("utf8").trim())return;let event:unknown;try{event=JSON.parse(line.toString("utf8"));}catch{return fail(new Error("query_protocol_failed"));}const root=event&&typeof event==="object"&&!Array.isArray(event)?event as Record<string,unknown>:undefined;const item=root?.item&&typeof root.item==="object"&&!Array.isArray(root.item)?root.item as Record<string,unknown>:undefined;if(root?.type==="item.completed"&&item?.type==="agent_message")answers.push(line.toString("utf8"));};
-      const append=(chunk:Buffer)=>{size+=chunk.length;if(size>this.maxOutputBytes)return fail(new Error("query_output_too_large"));pending=Buffer.concat([pending,chunk]);let newline:number;while((newline=pending.indexOf(10))>=0){const line=pending.subarray(0,newline);pending=pending.subarray(newline+1);inspect(line);if(settled)return;}if(pending.length>this.maxLineBytes)fail(new Error("query_output_too_large"));};
+      const appendAnswer=(chunk:Buffer)=>{answerSize+=chunk.length;if(answerSize>this.maxAnswerBytes)return fail(new Error("query_output_too_large"));answers.push(chunk);};
       const timer=setTimeout(()=>{timedOut=true;child.kill("SIGKILL");},options.timeoutMs);
-      child.stdout!.on("data",append);child.stderr!.on("data",(chunk:Buffer)=>{size+=chunk.length;if(size>this.maxOutputBytes)fail(new Error("query_output_too_large"));});child.on("error",fail);child.on("exit",code=>{clearTimeout(timer);if(settled)return;if(pending.length)inspect(pending);if(settled)return;settled=true;if(timedOut)return reject(new Error("query_timeout"));resolve({exitCode:code??1,stdout:answers.join("\n")+(answers.length?"\n":"")});});if(input!==undefined)child.stdin!.end(input);
+      child.stdout!.on("data",appendAnswer);child.stderr!.on("data",(chunk:Buffer)=>{progressSize+=chunk.length;if(progressSize>this.maxProgressBytes)fail(new Error("query_output_too_large"));});child.on("error",fail);child.on("exit",code=>{clearTimeout(timer);if(settled)return;settled=true;if(timedOut)return reject(new Error("query_timeout"));resolve({exitCode:code??1,stdout:Buffer.concat(answers).toString("utf8")});});if(input!==undefined)child.stdin!.end(input);
     });
   }
 }
@@ -74,7 +66,7 @@ export class RepositoryQueryService {
     try{
       if(os.userInfo().username.toLowerCase()!==this.config.expectedUsername.toLowerCase())return{version:1,queryId:request.queryId,state:"refused",category:"reader_identity_mismatch"};
       const selected=request.projects.map(project=>this.sources.get(project));if(selected.some(source=>!source))return{version:1,queryId:request.queryId,state:"refused",category:"project_not_readable"};const resolved=selected as QuerySource[];const observedAt=new Date().toISOString();const sources=resolved.map(source=>({project:source.project,source:source.label,observedAt}));
-      const result=await this.process.run(this.config.nodeExecutable??process.execPath,[this.config.codexJs,"exec","--sandbox","read-only","--ephemeral","--dangerously-bypass-hook-trust","--json","-C",resolved[0].root,"-"],promptFor(request,sources,resolved),{cwd:resolved[0].root,timeoutMs:this.config.timeoutMs,environment:codexEnvironment()});
+      const result=await this.process.run(this.config.nodeExecutable??process.execPath,[this.config.codexJs,"exec","--sandbox","read-only","--ephemeral","--dangerously-bypass-hook-trust","-C",resolved[0].root,"-"],promptFor(request,sources,resolved),{cwd:resolved[0].root,timeoutMs:this.config.timeoutMs,environment:codexEnvironment()});
       if(result.exitCode!==0)throw new Error("query_process_failed");return{version:1,queryId:request.queryId,state:"completed",answer:redactText(finalAgentMessage(result.stdout),MAX_ANSWER),sources};
     }catch(error){const category=error instanceof Error&&/^(?:query_(?:process_failed|protocol_failed|timeout|output_too_large))$/.test(error.message)?error.message:"query_failed";return{version:1,queryId:request.queryId,state:"failed",category};}
   }
