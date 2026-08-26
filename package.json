@@ -9,6 +9,7 @@
     "legacy:start": "node --enable-source-maps dist/index.js",
     "broker:start": "node --enable-source-maps dist/hostBrokerMain.js",
     "broker:command": "node --enable-source-maps dist/brokerCommandMain.js",
+    "query:command": "node --enable-source-maps dist/queryCommandMain.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test dist/**/*.test.js scripts/*.test.mjs",
     "services:check": "node scripts/validate-service-templates.mjs"

@@ -38,13 +38,15 @@ test("failure categories never expose socket details", () => {
   assert.equal(pilotFailureCategory(new Error("timeout")), "timeout");
 });
 
-test("only a valid prompt command extends the bounded client timeout", () => {
+test("only a valid prompt or repository query extends the bounded client timeout", () => {
   assert.equal(pilotRequestTimeoutMs(Buffer.from(JSON.stringify({ contractVersion: CONTRACT_VERSION, verb: "job_status", jobId: "job_12345678" }))), PILOT_IO_TIMEOUT_MS);
   assert.equal(pilotRequestTimeoutMs(promptRequest(1_000)), PILOT_IO_TIMEOUT_MS);
   assert.equal(pilotRequestTimeoutMs(promptRequest(120_000)), 130_000);
   assert.equal(pilotRequestTimeoutMs(promptRequest(900_000)), PILOT_MAX_IO_TIMEOUT_MS);
   assert.equal(pilotRequestTimeoutMs(Buffer.from(JSON.stringify({ contractVersion: CONTRACT_VERSION, verb: "prompt_job", jobId: "job_12345678", taskText: "bounded task", timeoutMs: 900_001 }))), PILOT_IO_TIMEOUT_MS);
   assert.equal(pilotRequestTimeoutMs(Buffer.from(JSON.stringify({ verb: "prompt_job", timeoutMs: 900_000 }))), PILOT_IO_TIMEOUT_MS);
+  const previous=process.env.QUERY_TIMEOUT_MS;process.env.QUERY_TIMEOUT_MS="120000";
+  try{assert.equal(pilotRequestTimeoutMs(Buffer.from(JSON.stringify({version:1,queryId:`query_${"a".repeat(32)}`,projects:["lmns"],question:"Where is policy enforced?"}))),130_000);}finally{if(previous===undefined)delete process.env.QUERY_TIMEOUT_MS;else process.env.QUERY_TIMEOUT_MS=previous;}
 });
 
 test("IPC forwards one request and shutdown rejects traffic", async () => {

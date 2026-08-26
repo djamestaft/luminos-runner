@@ -44,6 +44,39 @@ Existing one-project installations may continue using the legacy
 configuration that mixes any legacy project key with `BROKER_PROJECTS_FILE` is
 rejected as ambiguous.
 
+## Read-only repository consultation
+
+`queryCommandMain.js` is a separate, one-request consultation endpoint. It
+accepts an opaque query id, one or two logical project keys, and a bounded
+question. It refuses unknown projects and mappings without the `read` profile,
+verifies each clone's exact remote, requires a completely clean checkout, and
+records the exact HEAD revisions in its response. It invokes Codex with
+`exec --sandbox read-only --ephemeral --dangerously-bypass-hook-trust --json`
+and a minimal environment; it has no worktree, commit, push, PR, Herdr, broker
+registry, or GitHub-token path.
+
+Codex's filesystem read-only policy prevents writes but is not a per-directory
+confidentiality boundary. `QUERY_EXPECTED_USERNAME` therefore binds the route
+to the intended personal runner account, but the process retains that account's
+normal file-read permissions. Use only clean dedicated LMNS and Reghub clones,
+not an active working checkout. The query child receives a minimal environment
+and no broker GitHub token, but this is not OS-level repository confinement.
+
+Example protected query config:
+
+```text
+BROKER_PROJECTS_FILE=C:\ProgramData\Luminos\reader-projects.json
+QUERY_EXPECTED_USERNAME=gregj
+QUERY_CODEX_JS=C:\Users\gregj\AppData\Roaming\npm\node_modules\@openai\codex\bin\codex.js
+QUERY_TIMEOUT_MS=600000
+```
+
+Greg's normal-account foreground pilot can serve implementation and query
+requests over the same protected named-pipe proxy. The request shape selects
+the fixed broker or query handler; it never selects an executable. SSH
+commands, TTYs, forwarding, agent forwarding, tunnels, and user environment
+remain refused.
+
 One-request constrained entry point:
 
 ```sh

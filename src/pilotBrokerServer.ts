@@ -1,6 +1,5 @@
 import net, { type Socket } from "node:net";
-import { parseBrokerCommand } from "@djamestaft/hermes-herdr-contracts";
-import { MAX_PILOT_REQUEST_BYTES, MAX_PILOT_RESPONSE_BYTES, PILOT_IO_TIMEOUT_MS, parseSingleJson, pilotCommandTimeoutMs, pilotFailureCategory } from "./pilotBrokerIpc.js";
+import { MAX_PILOT_REQUEST_BYTES, MAX_PILOT_RESPONSE_BYTES, PILOT_IO_TIMEOUT_MS, parseSingleJson, pilotExecutionTimeoutMs, pilotFailureCategory } from "./pilotBrokerIpc.js";
 
 export interface PilotBroker { execute(raw: unknown): Promise<unknown>; }
 export interface PilotBrokerServer { readonly endpoint: string; close(): Promise<void>; }
@@ -41,10 +40,7 @@ export const startPilotBrokerServer = async (endpoint: string, broker: PilotBrok
         const request = framed.at(-1) === 0x0a ? framed.subarray(0, -1) : framed;
         const raw = parseSingleJson(request, MAX_PILOT_REQUEST_BYTES);
         let executionTimeoutMs = PILOT_IO_TIMEOUT_MS;
-        try { executionTimeoutMs = pilotCommandTimeoutMs(parseBrokerCommand(raw)); } catch {
-          // Invalid commands remain bounded by the base timeout and are left to
-          // the broker for its authoritative refusal.
-        }
+        executionTimeoutMs = pilotExecutionTimeoutMs(raw);
         phase = "executing";
         setSocketTimeout(socket, executionTimeoutMs);
         const result = await broker.execute(raw);

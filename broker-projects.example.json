@@ -9,7 +9,7 @@
       "expectedRemoteUrl": "git@github.com:organization/lmns.git",
       "baseBranch": "main",
       "githubRepo": "organization/lmns",
-      "profiles": ["default"]
+      "profiles": ["default", "read"]
     },
     {
       "project": "reghub",
@@ -19,7 +19,7 @@
       "expectedRemoteUrl": "git@github.com:organization/reghub.git",
       "baseBranch": "main",
       "githubRepo": "organization/reghub",
-      "profiles": ["default"]
+      "profiles": ["read"]
     }
   ]
 }
