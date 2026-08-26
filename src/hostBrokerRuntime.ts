@@ -1,13 +1,14 @@
 import path from "node:path";
-import { HostBroker, type ProjectPolicy } from "./broker.js";
+import { HostBroker } from "./broker.js";
 import { FileJobRegistry } from "./fileJobRegistry.js";
 import { GitCliWorkspaceAdapter } from "./gitWorkspaceAdapter.js";
 import { HerdrCliAdapter } from "./herdrCliAdapter.js";
 import { SpawnProcessExecutor } from "./processExecutor.js";
 import { loadProtectedGithubToken } from "./protectedConfig.js";
+import { loadProjectPoliciesFromEnvironment } from "./projectPolicies.js";
 
 const required=(name:string)=>{const value=process.env[name];if(!value)throw new Error(`Missing required environment variable: ${name}`);return value;};
-const policy:ProjectPolicy={project:required("BROKER_PROJECT_KEY"),repoRoot:required("BROKER_REPO_ROOT"),worktreeRoot:required("BROKER_WORKTREE_ROOT"),remote:process.env.BROKER_GIT_REMOTE??"origin",expectedRemoteUrl:required("BROKER_EXPECTED_REMOTE_URL"),baseRef:process.env.BROKER_BASE_REF??"origin/main",baseBranch:process.env.BROKER_BASE_BRANCH??"main",githubRepo:required("BROKER_GITHUB_REPO"),profiles:(process.env.BROKER_PROFILES??"default").split(",").map(v=>v.trim()).filter(Boolean)};
+const policies=await loadProjectPoliciesFromEnvironment();
 const executor=new SpawnProcessExecutor();
 const githubToken=await loadProtectedGithubToken(required("BROKER_GITHUB_TOKEN_FILE"));
-export const broker=new HostBroker(new Map([[policy.project,policy]]),new FileJobRegistry(path.join(required("BROKER_STATE_ROOT"),"jobs.json")),new GitCliWorkspaceAdapter(executor,"git","gh",githubToken),new HerdrCliAdapter(executor,process.env.BROKER_AGENT_KIND==="pi"?"pi":"codex","herdr",process.env.BROKER_SHELL_ZDOTDIR));
+export const broker=new HostBroker(policies,new FileJobRegistry(path.join(required("BROKER_STATE_ROOT"),"jobs.json")),new GitCliWorkspaceAdapter(executor,"git","gh",githubToken),new HerdrCliAdapter(executor,process.env.BROKER_AGENT_KIND==="pi"?"pi":"codex","herdr",process.env.BROKER_SHELL_ZDOTDIR));

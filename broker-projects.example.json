@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "projects": [
+    {
+      "project": "lmns",
+      "repoRoot": "/absolute/path/to/protected/lmns-clone",
+      "worktreeRoot": "/absolute/path/to/protected/lmns-worktrees",
+      "remote": "origin",
+      "expectedRemoteUrl": "git@github.com:organization/lmns.git",
+      "baseBranch": "main",
+      "githubRepo": "organization/lmns",
+      "profiles": ["default"]
+    },
+    {
+      "project": "reghub",
+      "repoRoot": "/absolute/path/to/protected/reghub-clone",
+      "worktreeRoot": "/absolute/path/to/protected/reghub-worktrees",
+      "remote": "origin",
+      "expectedRemoteUrl": "git@github.com:organization/reghub.git",
+      "baseBranch": "main",
+      "githubRepo": "organization/reghub",
+      "profiles": ["default"]
+    }
+  ]
+}

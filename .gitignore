@@ -1,6 +1,8 @@
 node_modules/
 dist/
 task-workspaces/
+releases/
+.DS_Store
 .env
 .env.*
 !.env.example

@@ -25,6 +25,13 @@ $tokenPath = $tokenLine.Substring($tokenLine.IndexOf('=') + 1).Trim()
 if (!$tokenPath -or ![System.IO.Path]::IsPathFullyQualified($tokenPath) -or !(Test-Path -LiteralPath $tokenPath -PathType Leaf)) { throw 'BROKER_GITHUB_TOKEN_FILE must be an existing absolute file' }
 $broadTokenAccess = Get-Acl -LiteralPath $tokenPath | Select-Object -ExpandProperty Access | Where-Object { $_.IdentityReference -match '(Everyone|BUILTIN\\Users|Authenticated Users)$' -and $_.FileSystemRights -match '(Read|Write|Modify|FullControl)' }
 if ($broadTokenAccess) { throw 'GitHub token file is accessible by a broad Windows principal' }
+$projectsLine = Get-Content -LiteralPath $ConfigPath | Where-Object { $_.Trim().StartsWith('BROKER_PROJECTS_FILE=') } | Select-Object -Last 1
+if ($projectsLine) {
+  $projectsPath = $projectsLine.Substring($projectsLine.IndexOf('=') + 1).Trim()
+  if (!$projectsPath -or ![System.IO.Path]::IsPathFullyQualified($projectsPath) -or !(Test-Path -LiteralPath $projectsPath -PathType Leaf)) { throw 'BROKER_PROJECTS_FILE must be an existing absolute file' }
+  $broadProjectsAccess = Get-Acl -LiteralPath $projectsPath | Select-Object -ExpandProperty Access | Where-Object { $_.IdentityReference -match '(Everyone|BUILTIN\\Users|Authenticated Users)$' -and $_.FileSystemRights -match '(Read|Write|Modify|FullControl)' }
+  if ($broadProjectsAccess) { throw 'Project policy file is accessible by a broad Windows principal' }
+}
 if (!$Apply) { Write-Host "Validation passed. Re-run with -Apply to install the immutable release at $InstallRoot."; exit 0 }
 if (Test-Path -LiteralPath $InstallRoot) { throw 'InstallRoot already exists; use a new versioned release directory' }
 New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null

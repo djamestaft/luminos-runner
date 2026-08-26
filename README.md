@@ -15,7 +15,34 @@ This package is the only machine-side executor for the Hermes-native runner pool
 
 ## Protected configuration
 
-Copy `.env.example` to an out-of-repository protected location. On POSIX, the broker refuses a config or GitHub token file accessible to group/other users. On Windows, the install and forced-command scripts reject token files accessible to broad principals such as `Users`, `Authenticated Users`, or `Everyone`. Only documented `BROKER_*` keys are accepted. `BROKER_GITHUB_TOKEN_FILE` names an absolute, host-local file containing the GitHub CLI token; the runner loads it once and exposes it only to `gh` subprocesses. GitHub and SSH credentials are never protocol fields.
+Copy `.env.example` and `broker-projects.example.json` to separate
+out-of-repository protected locations. `BROKER_PROJECTS_FILE` names the absolute
+JSON registry containing every allowlisted project/profile mapping. Each entry
+binds a logical project key to fixed absolute repository and worktree roots, an
+exact GitHub repository/remote, one base branch, and an explicit profile list.
+Unknown projects and profiles fail closed; protocol input can never provide a
+path, remote, repository, branch, or executable.
+
+The registry accepts at most 16 uniquely named projects. Repository and
+worktree roots may not overlap. The expected remote URL must match the declared
+GitHub repository, and the protected base ref is derived from the configured
+remote and base branch. Do not place credentials in this registry.
+
+On POSIX, the broker refuses a config, project registry, or GitHub token file
+accessible to group/other users. On Windows, the install and forced-command
+scripts reject token and project registry files accessible to broad principals
+such as `Users`, `Authenticated Users`, or `Everyone`. Only documented
+`BROKER_*` keys are accepted. `BROKER_GITHUB_TOKEN_FILE` names an absolute,
+host-local file containing the GitHub CLI token; the runner loads it once and
+exposes it only to `gh` subprocesses. GitHub and SSH credentials are never
+protocol fields.
+
+Existing one-project installations may continue using the legacy
+`BROKER_PROJECT_KEY`, `BROKER_REPO_ROOT`, `BROKER_WORKTREE_ROOT`,
+`BROKER_EXPECTED_REMOTE_URL`, `BROKER_GITHUB_REPO`, `BROKER_GIT_REMOTE`,
+`BROKER_BASE_REF`, `BROKER_BASE_BRANCH`, and `BROKER_PROFILES` keys. A broker
+configuration that mixes any legacy project key with `BROKER_PROJECTS_FILE` is
+rejected as ambiguous.
 
 One-request constrained entry point:
 
