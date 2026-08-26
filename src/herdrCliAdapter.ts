@@ -110,7 +110,13 @@ export class HerdrCliAdapter implements HerdrAdapter {
     try{
       const envelope=await this.call(["agent","get",agentName],5_000);
       const agent=object(result(envelope).agent);
-      if(!agent||agent.agent!==this.agentKind||agent.name!==agentName||agent.interactive_ready!==true||typeof agent.pane_id!=="string")throw classified("success_invalid_json");
+      // Herdr 0.7 resolves the requested durable name but does not echo
+      // `name` or `interactive_ready`; 0.8+ supplies both. Accept only true
+      // field absence for the legacy response. If either field is present it
+      // remains authoritative and must match exactly.
+      if(!agent||agent.agent!==this.agentKind||typeof agent.pane_id!=="string")throw classified("success_invalid_json");
+      if("name" in agent&&agent.name!==agentName)throw classified("success_invalid_json");
+      if("interactive_ready" in agent&&agent.interactive_ready!==true)throw classified("success_invalid_json");
       const processEnvelope=await this.call(["pane","process-info","--pane",agent.pane_id],5_000);
       const processInfo=object(result(processEnvelope).process_info);
       if(!processInfo||!Array.isArray(processInfo.foreground_processes))throw classified("success_invalid_json");
