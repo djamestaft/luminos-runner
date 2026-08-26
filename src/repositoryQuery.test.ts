@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import test from "node:test";
 import type { QuerySource } from "./querySources.js";
-import { parseRepositoryQuery,RepositoryQueryService,type QueryProcess,type QueryProcessResult } from "./repositoryQuery.js";
+import { parseRepositoryQuery,RepositoryQueryService,SpawnQueryProcess,type QueryProcess,type QueryProcessResult } from "./repositoryQuery.js";
 
 const source=(project:string,root:string):QuerySource=>({project,root,label:`Greg local ${project} working copy`});
 class FakeProcess implements QueryProcess {
@@ -35,4 +35,15 @@ test("query refuses an unknown source before process execution",async()=>{
 test("query reports a bounded failure when Codex exits unsuccessfully",async()=>{
   class FailedCodex extends FakeProcess{public override async run(file:string,args:readonly string[],input:string|undefined,options:{cwd?:string;environment?:NodeJS.ProcessEnv}){this.calls.push({file,args,input,cwd:options.cwd,environment:options.environment});return{exitCode:1,stdout:""};}}
   const process=new FailedCodex();const service=new RepositoryQueryService(new Map([["lmns",source("lmns","C:\\reader\\lmns")]]),process,{expectedUsername:os.userInfo().username,codexJs:"C:\\tools\\codex.js",timeoutMs:60_000,nodeExecutable:"node"});const result=await service.execute({version:1,queryId:`query_${"d".repeat(32)}`,projects:["lmns"],question:"Question"});assert.equal(result.state,"failed");assert.equal(result.category,"query_process_failed");assert.equal(process.calls.length,1);
+});
+
+test("query process discards large non-answer JSONL events and retains only the final answer",async()=>{
+  const script=`for(let i=0;i<400;i++)console.log(JSON.stringify({type:"item.completed",item:{type:"command_execution",aggregated_output:"x".repeat(1000)}}));console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:"See src/policy.ts:12."}}));`;
+  const result=await new SpawnQueryProcess(1_000_000).run(process.execPath,["-e",script],undefined,{timeoutMs:10_000});
+  assert.equal(result.exitCode,0);assert.match(result.stdout,/src\/policy\.ts:12/);assert.doesNotMatch(result.stdout,/"x{100}/);assert.ok(Buffer.byteLength(result.stdout)<500);
+});
+
+test("query process retains a hard total stream ceiling",async()=>{
+  const script=`console.log(JSON.stringify({type:"item.completed",item:{type:"command_execution",aggregated_output:"x".repeat(2000)}}));`;
+  await assert.rejects(()=>new SpawnQueryProcess(1024).run(process.execPath,["-e",script],undefined,{timeoutMs:10_000}),/query_output_too_large/);
 });

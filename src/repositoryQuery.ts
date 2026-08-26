@@ -33,7 +33,7 @@ export const parseRepositoryQuery = (raw:unknown):RepositoryQueryRequest => {
 
 const promptFor = (request:RepositoryQueryRequest,evidence:RepositoryEvidence[],sources:QuerySource[]):string => {
   const listedSources=evidence.map((item,index)=>`${index+1}. ${item.project} (${item.source}), observed ${item.observedAt}; local root: ${sources[index].root}`).join("\n");
-  return `You are a read-only source analyst. Answer the question using only the local source directories listed below. Do not modify files, run Git or network commands, use credentials, or inspect .git, environment files, credential files, the user profile, or paths outside the listed roots. You may run local read-only inspection commands within those roots. Distinguish source evidence from inference and recommendations. Cite supporting source-relative file paths and line numbers. If evidence is absent or ambiguous, say so.\n\nLocal sources:\n${listedSources}\n\nQuestion:\n${request.question}`;
+  return `You are a read-only source analyst. Answer the question using only the local source directories listed below. Do not modify files, run Git or network commands, use credentials, or inspect .git, environment files, credential files, the user profile, or paths outside the listed roots. You may run local read-only inspection commands within those roots. Keep every command targeted and bounded: never enumerate the whole repository, exclude generated/vendor/build directories, and limit displayed matches or lines to at most 200 per command. Distinguish source evidence from inference and recommendations. Cite supporting source-relative file paths and line numbers. Keep the final answer concise. If evidence is absent or ambiguous, say so.\n\nLocal sources:\n${listedSources}\n\nQuestion:\n${request.question}`;
 };
 
 const codexEnvironment = ():NodeJS.ProcessEnv => {
@@ -55,13 +55,14 @@ const finalAgentMessage = (output:string):string => {
 };
 
 export class SpawnQueryProcess implements QueryProcess {
-  public constructor(private readonly maxOutputBytes=262_144){}
+  public constructor(private readonly maxOutputBytes=16_777_216,private readonly maxLineBytes=1_048_576){}
   public run(file:string,args:readonly string[],input:string|undefined,options:{cwd?:string;timeoutMs:number;environment?:NodeJS.ProcessEnv}):Promise<QueryProcessResult>{
-    return new Promise((resolve,reject)=>{let size=0,settled=false,timedOut=false;const out:Buffer[]=[];const child=spawn(file,[...args],{cwd:options.cwd,env:options.environment??process.env,shell:false,stdio:[input===undefined?"ignore":"pipe","pipe","pipe"]});
+    return new Promise((resolve,reject)=>{let size=0,settled=false,timedOut=false,pending=Buffer.alloc(0);const answers:string[]=[];const child=spawn(file,[...args],{cwd:options.cwd,env:options.environment??process.env,shell:false,stdio:[input===undefined?"ignore":"pipe","pipe","pipe"]});
       const fail=(error:Error)=>{if(settled)return;settled=true;child.kill("SIGKILL");reject(error);};
-      const append=(chunk:Buffer)=>{size+=chunk.length;if(size>this.maxOutputBytes)fail(new Error("query_output_too_large"));else out.push(chunk);};
+      const inspect=(line:Buffer)=>{if(line.length>this.maxLineBytes)return fail(new Error("query_output_too_large"));if(!line.toString("utf8").trim())return;let event:unknown;try{event=JSON.parse(line.toString("utf8"));}catch{return fail(new Error("query_protocol_failed"));}const root=event&&typeof event==="object"&&!Array.isArray(event)?event as Record<string,unknown>:undefined;const item=root?.item&&typeof root.item==="object"&&!Array.isArray(root.item)?root.item as Record<string,unknown>:undefined;if(root?.type==="item.completed"&&item?.type==="agent_message")answers.push(line.toString("utf8"));};
+      const append=(chunk:Buffer)=>{size+=chunk.length;if(size>this.maxOutputBytes)return fail(new Error("query_output_too_large"));pending=Buffer.concat([pending,chunk]);let newline:number;while((newline=pending.indexOf(10))>=0){const line=pending.subarray(0,newline);pending=pending.subarray(newline+1);inspect(line);if(settled)return;}if(pending.length>this.maxLineBytes)fail(new Error("query_output_too_large"));};
       const timer=setTimeout(()=>{timedOut=true;child.kill("SIGKILL");},options.timeoutMs);
-      child.stdout!.on("data",append);child.stderr!.on("data",(chunk:Buffer)=>{size+=chunk.length;if(size>this.maxOutputBytes)fail(new Error("query_output_too_large"));});child.on("error",fail);child.on("exit",code=>{clearTimeout(timer);if(settled)return;settled=true;if(timedOut)return reject(new Error("query_timeout"));resolve({exitCode:code??1,stdout:Buffer.concat(out).toString("utf8")});});if(input!==undefined)child.stdin!.end(input);
+      child.stdout!.on("data",append);child.stderr!.on("data",(chunk:Buffer)=>{size+=chunk.length;if(size>this.maxOutputBytes)fail(new Error("query_output_too_large"));});child.on("error",fail);child.on("exit",code=>{clearTimeout(timer);if(settled)return;if(pending.length)inspect(pending);if(settled)return;settled=true;if(timedOut)return reject(new Error("query_timeout"));resolve({exitCode:code??1,stdout:answers.join("\n")+(answers.length?"\n":"")});});if(input!==undefined)child.stdin!.end(input);
     });
   }
 }
