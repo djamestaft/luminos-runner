@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "project": "reghub",
+      "root": "C:\\absolute\\path\\to\\Reghub",
+      "label": "Greg local Reghub working copy"
+    }
+  ]
+}

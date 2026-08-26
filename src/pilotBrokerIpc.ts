@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import type { BrokerCommand } from "@djamestaft/hermes-herdr-contracts";
 import { MAX_TIMEOUT_MS, parseBrokerCommand } from "@djamestaft/hermes-herdr-contracts";
+import { parseRepositoryQuery } from "./repositoryQuery.js";
 
 export const PILOT_PROTOCOL_VERSION = 1;
 export const MAX_PILOT_REQUEST_BYTES = 65_536;
@@ -55,10 +56,14 @@ export const pilotCommandTimeoutMs = (command: BrokerCommand): number => {
   return PILOT_IO_TIMEOUT_MS;
 };
 
+export const pilotExecutionTimeoutMs=(raw:unknown):number=>{
+  try{return pilotCommandTimeoutMs(parseBrokerCommand(raw));}catch{/* Query parsing is attempted below. */}
+  try{parseRepositoryQuery(raw);const configured=Number(process.env.QUERY_TIMEOUT_MS??"600000");return Number.isSafeInteger(configured)&&configured>=30_000&&configured<=900_000?configured+PILOT_IO_TIMEOUT_GRACE_MS:PILOT_IO_TIMEOUT_MS;}catch{return PILOT_IO_TIMEOUT_MS;}
+};
+
 export const pilotRequestTimeoutMs = (request: Buffer): number => {
   try {
-    const command = parseBrokerCommand(parseSingleJson(request, MAX_PILOT_REQUEST_BYTES));
-    return pilotCommandTimeoutMs(command);
+    return pilotExecutionTimeoutMs(parseSingleJson(request, MAX_PILOT_REQUEST_BYTES));
   } catch {
     // Malformed requests still reach the broker for its authoritative refusal,
     // but never obtain a longer transport window from untrusted fields.

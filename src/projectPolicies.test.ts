@@ -16,7 +16,7 @@ const registry = () => ({
 test("parses multiple exact protected project and profile mappings", () => {
   const policies = parseProjectPolicies(registry());
   assert.equal(policies.size, 2);
-  assert.deepEqual(policies.get("lmns"), { project: "lmns", repoRoot: "/protected/lmns", worktreeRoot: "/protected/worktrees/lmns", remote: "origin", expectedRemoteUrl: "git@github.com:djamestaft/lmns.git", baseRef: "origin/main", baseBranch: "main", githubRepo: "djamestaft/lmns", profiles: ["default"] });
+  assert.deepEqual(policies.get("lmns"), { project: "lmns", repoRoot: path.normalize("/protected/lmns"), worktreeRoot: path.normalize("/protected/worktrees/lmns"), remote: "origin", expectedRemoteUrl: "git@github.com:djamestaft/lmns.git", baseRef: "origin/main", baseBranch: "main", githubRepo: "djamestaft/lmns", profiles: ["default"] });
   assert.equal(policies.get("reghub")?.baseRef, "upstream/develop");
   assert.deepEqual(policies.get("reghub")?.profiles, ["read", "controlled_test"]);
 });

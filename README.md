@@ -44,6 +44,47 @@ Existing one-project installations may continue using the legacy
 configuration that mixes any legacy project key with `BROKER_PROJECTS_FILE` is
 rejected as ambiguous.
 
+## Read-only repository consultation
+
+`queryCommandMain.js` is a separate, one-request consultation endpoint. It
+accepts an opaque query id, one or two logical project keys, and a bounded
+question. A separate protected source registry maps each key to a fixed local
+directory and display label. It refuses unknown projects and invokes Codex directly in
+the mapped directory with
+`exec --sandbox read-only --ephemeral --dangerously-bypass-hook-trust --json`
+and a minimal environment. The consultation path does not invoke Git, inspect a
+remote, resolve a revision, create a worktree, branch, commit, push, PR, Herdr
+agent, broker registry entry, or GitHub-token path. Its response identifies the
+local source label and observation time.
+
+Codex's filesystem read-only policy prevents writes but is not a per-directory
+confidentiality boundary. `QUERY_EXPECTED_USERNAME` therefore binds the route
+to the intended personal runner account, but the process retains that account's
+normal file-read permissions. Consultation deliberately observes the current
+local working copy, including any current local edits. The query child receives a minimal environment
+and no broker GitHub token, but this is not OS-level directory confinement. Its
+prompt also forbids reading `.git`, environment or credential files, user-profile
+data, and paths outside the configured source roots.
+
+Example protected query config:
+
+```text
+QUERY_SOURCES_FILE=C:\ProgramData\Luminos\query-sources.json
+QUERY_EXPECTED_USERNAME=gregj
+QUERY_CODEX_JS=C:\Users\gregj\AppData\Roaming\npm\node_modules\@openai\codex\bin\codex.js
+QUERY_TIMEOUT_MS=600000
+```
+
+The protected source file follows `query-sources.example.json`. It contains
+only logical project keys, fixed absolute local roots, and display labels; it
+has no Git remote, branch, revision, or worktree settings.
+
+Greg's normal-account foreground pilot can serve implementation and query
+requests over the same protected named-pipe proxy. The request shape selects
+the fixed broker or query handler; it never selects an executable. SSH
+commands, TTYs, forwarding, agent forwarding, tunnels, and user environment
+remain refused.
+
 One-request constrained entry point:
 
 ```sh
