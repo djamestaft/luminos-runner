@@ -3,8 +3,8 @@ import { loadProtectedBrokerConfig } from "./protectedConfig.js";
 import { PILOT_PROTOCOL_VERSION, validatePilotPipeName, type PilotDescriptor } from "./pilotBrokerIpc.js";
 import { startPilotBrokerServer } from "./pilotBrokerServer.js";
 import path from "node:path";
-import { loadProjectPoliciesFromEnvironment } from "./projectPolicies.js";
 import { parseRepositoryQuery,RepositoryQueryService,SpawnQueryProcess } from "./repositoryQuery.js";
+import { loadProtectedQuerySources } from "./querySources.js";
 
 const parseArgs = (): Record<string, string> => {
   if (process.argv.length !== 10) throw new Error("invalid_arguments");
@@ -24,7 +24,7 @@ const pipeName = validatePilotPipeName(args["--pipe"]);
 await loadProtectedBrokerConfig(args["--config"]);
 const { broker } = await import("./hostBrokerRuntime.js");
 let executor:{execute(raw:unknown):Promise<unknown>}=broker;
-if(process.env.QUERY_CODEX_JS&&process.env.QUERY_EXPECTED_USERNAME){const codexJs=process.env.QUERY_CODEX_JS;if(!path.isAbsolute(codexJs))throw new Error("invalid_query_codex_path");const timeoutMs=Number(process.env.QUERY_TIMEOUT_MS??"600000");const query=new RepositoryQueryService(await loadProjectPoliciesFromEnvironment(),new SpawnQueryProcess(),{expectedUsername:process.env.QUERY_EXPECTED_USERNAME,codexJs,timeoutMs});executor={execute:async raw=>{try{parseRepositoryQuery(raw);return query.execute(raw);}catch{return broker.execute(raw);}}};}
+if(process.env.QUERY_CODEX_JS&&process.env.QUERY_EXPECTED_USERNAME&&process.env.QUERY_SOURCES_FILE){const codexJs=process.env.QUERY_CODEX_JS;if(!path.isAbsolute(codexJs))throw new Error("invalid_query_codex_path");const timeoutMs=Number(process.env.QUERY_TIMEOUT_MS??"600000");const query=new RepositoryQueryService(await loadProtectedQuerySources(process.env.QUERY_SOURCES_FILE),new SpawnQueryProcess(),{expectedUsername:process.env.QUERY_EXPECTED_USERNAME,codexJs,timeoutMs});executor={execute:async raw=>{try{parseRepositoryQuery(raw);return query.execute(raw);}catch{return broker.execute(raw);}}};}
 const server = await startPilotBrokerServer(pipeName, executor);
 const correlation = pipeName.slice(-32);
 const descriptor: PilotDescriptor = { protocolVersion: PILOT_PROTOCOL_VERSION, pipeName, processId: process.pid, sessionCorrelation: correlation, expiresAt: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(), ready: true };
